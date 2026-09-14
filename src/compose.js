@@ -21,6 +21,8 @@
 import { readdir, stat } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 
+import { mountScriptGuard, trustParagraph } from './trust.js'
+
 /** System prompt section name owned by this plugin (one per agent scope). */
 export const ROLE_SECTION_NAME = 'expert-role'
 
@@ -40,6 +42,17 @@ export function roleMetaLine(expertCard) {
 export function roleSectionText(expertCard) {
   const body = typeof expertCard.roleText === 'string' ? expertCard.roleText.trim() : ''
   return body === '' ? roleMetaLine(expertCard) : `${body}\n\n${roleMetaLine(expertCard)}`
+}
+
+/**
+ * Role section text plus the script-trust paragraph (ticket 04): untrusted
+ * project expert → guard paragraph; trusting project expert → one-time
+ * (per composition) release notice; user rank → nothing appended.
+ */
+export function roleSectionTextWithTrust(expertCard) {
+  const paragraph = trustParagraph(expertCard)
+  const base = roleSectionText(expertCard)
+  return paragraph === '' ? base : `${base}\n\n${paragraph}`
 }
 
 // ── skills registration (defensive seam — ticket 05/10 may adjust) ──────────
@@ -191,9 +204,14 @@ export async function compose(agent, expertCard, logger = {}) {
   // per-skill registration fails) rides inside the role section text.
   const { disposers: skillDisposers, fallbackCatalog } = registerExpertSkills(agentCtx, expertCard, logger)
 
+  // Script-trust gating (ticket 04): the trust paragraph rides the role
+  // section; hard enforcement is a best-effort scoped tool guard that
+  // degrades to this paragraph with one warning (see mountScriptGuard).
+  const guardDisposer = mountScriptGuard(agentCtx, expertCard, logger)
+
   const text = fallbackCatalog === ''
-    ? roleSectionText(expertCard)
-    : `${roleSectionText(expertCard)}\n\n${fallbackCatalog}`
+    ? roleSectionTextWithTrust(expertCard)
+    : `${roleSectionTextWithTrust(expertCard)}\n\n${fallbackCatalog}`
 
   const disposers = []
   if (systemPrompt !== undefined && typeof systemPrompt.section === 'function') {
@@ -210,7 +228,7 @@ export async function compose(agent, expertCard, logger = {}) {
     dispose() {
       // Reverse order (design §4): role section last-registered → first out,
       // then skills in reverse registration order.
-      for (const dispose of [...disposers, ...skillDisposers].reverse()) {
+      for (const dispose of [...disposers, ...skillDisposers, guardDisposer].reverse()) {
         try {
           dispose()
         } catch (error) {

@@ -42,6 +42,15 @@
  *  12. generation stamping: the composition holds its startup role text and
  *      (mtime+size) stamp; on-disk edits surface only after the registry
  *      cache is invalidated AND a later switch re-reads the folder.
+ *  13. script trust gating (ticket 04): trust_scripts parses onto the card
+ *      (default false) with the computed scriptsAllowed field; an untrusted
+ *      project expert composes with the guard paragraph + one degrade
+ *      warning when no tools.guard contract exists; a trusting project
+ *      expert composes with the one-time release notice; a user-rank expert
+ *      gets neither; commandTargetsExpertScripts matches only the expert's
+ *      own scripts/ references; mountScriptGuard denies a referencing bash
+ *      call, passes unrelated calls through, unmounts, and degrades with
+ *      one warning when guard registration throws.
  */
 
 import assert from 'node:assert/strict'
@@ -702,6 +711,148 @@ assert.equal(plugin.name, 'dsh-workbuddy-expert')
     '你是视频剪辑专家。变量 {{model}} 与 {{cwd}} 已注册，保留。(#1)',
     '未注册组必须拆括号：{{ y: -2 }} 与 {{.CurrentDate}}。(#2)',
   ].join('\r\n').concat('\r\n'))
+}
+
+// ── 13. script trust gating (ticket 04) ─────────────────────────────────────
+
+const { SCRIPT_GUARD_PARAGRAPH, SCRIPT_TRUST_NOTICE_PARAGRAPH, commandTargetsExpertScripts, mountScriptGuard } =
+  await import(join(root, 'src', 'trust.js'))
+
+{
+  // A trusting project expert: trust_scripts: true + a SKILL.md that
+  // references ./scripts/ under its own skill folder.
+  const projectExperts = join(projectRoot, '.agents', 'experts')
+  fixtureWrite(projectExperts, 'trusted-proj/expert.yml', [
+    'id: trusted-proj',
+    'display_name: 受信项目专家',
+    'trust_scripts: true',
+  ].join('\n'))
+  fixtureWrite(projectExperts, 'trusted-proj/role.md', '你是受信的项目专家。\n')
+  fixtureWrite(projectExperts, 'trusted-proj/skills/deploy/SKILL.md',
+    '运行 `./skills/deploy/scripts/deploy.sh` 完成部署。\n')
+
+  const { experts: fresh } = await createRegistry({ roots, scan: scanDiscoveryRoots, ttlMs: 600_000 }).list()
+  const untrusted = fresh.find((expert) => expert.id === 'shared')            // project, no declaration
+  const trusting = fresh.find((expert) => expert.id === 'trusted-proj')       // project, trust_scripts: true
+  const userRank = fresh.find((expert) => expert.id === 'video-editor')       // user rank
+
+  // Card shape: trust_scripts parses; scriptsAllowed is the computed gate.
+  assert.equal(untrusted.trustScripts, false, 'project card without declaration: trustScripts false')
+  assert.equal(untrusted.scriptsAllowed, false, 'project card without declaration: scripts NOT allowed')
+  assert.equal(trusting.trustScripts, true, 'trust_scripts: true parses onto the card')
+  assert.equal(trusting.scriptsAllowed, true, 'project card with declaration: scripts allowed')
+  assert.equal(userRank.trustScripts, false, 'user card needs no declaration')
+  assert.equal(userRank.scriptsAllowed, true, 'user rank: scripts always allowed')
+
+  // Untrusted project expert: guard paragraph + one degrade warning (the
+  // fake agent ctx has NO tools service, so the hard-enforcement contract
+  // cannot be confirmed and the paragraph-only path engages).
+  {
+    const agent = makeFakeAgent('gate-untrusted')
+    const logs = []
+    const composition = await compose(agent, untrusted, { warn: (m) => logs.push(m) })
+    const text = agent.sections.get(ROLE_SECTION_NAME).text
+    assert.ok(text.includes(SCRIPT_GUARD_PARAGRAPH), 'the untrusted project expert carries the guard paragraph')
+    assert.ok(!text.includes(SCRIPT_TRUST_NOTICE_PARAGRAPH), 'no release notice for the untrusted expert')
+    assert.ok(text.includes('trust_scripts: true'), 'the guard paragraph names the unlock')
+    assert.equal(logs.filter((m) => m.includes('拦截不可用')).length, 1,
+      'exactly one warning when the tools.guard contract is unavailable')
+    composition.dispose()
+  }
+
+  // Trusting project expert: the one-time (per composition) release notice,
+  // no guard paragraph, and no warnings.
+  {
+    const agent = makeFakeAgent('gate-trusted')
+    const logs = []
+    const composition = await compose(agent, trusting, { warn: (m) => logs.push(m) })
+    const text = agent.sections.get(ROLE_SECTION_NAME).text
+    assert.ok(text.includes(SCRIPT_TRUST_NOTICE_PARAGRAPH), 'the trusting project expert carries the release notice')
+    assert.ok(!text.includes(SCRIPT_GUARD_PARAGRAPH), 'no guard paragraph for the trusting expert')
+    assert.equal(text.split(SCRIPT_TRUST_NOTICE_PARAGRAPH).length - 1, 1, 'the notice appears exactly once')
+    assert.equal(logs.length, 0, 'a trusted compose probes no guard and logs nothing')
+    composition.dispose()
+  }
+
+  // User-rank expert: neither paragraph.
+  {
+    const agent = makeFakeAgent('gate-user')
+    const logs = []
+    const composition = await compose(agent, userRank, { warn: (m) => logs.push(m) })
+    const text = agent.sections.get(ROLE_SECTION_NAME).text
+    assert.ok(!text.includes(SCRIPT_GUARD_PARAGRAPH) && !text.includes(SCRIPT_TRUST_NOTICE_PARAGRAPH),
+      'a user-rank expert carries neither trust paragraph')
+    assert.equal(logs.length, 0)
+    composition.dispose()
+  }
+
+  // commandTargetsExpertScripts: only THIS expert's scripts/ references match.
+  {
+    const dir = untrusted.dir
+    assert.equal(commandTargetsExpertScripts(`bash ${join(dir, 'skills', 'deploy', 'scripts', 'deploy.sh')}`, untrusted), true,
+      'the absolute expert scripts path matches')
+    assert.equal(commandTargetsExpertScripts('sh ./skills/deploy/scripts/deploy.sh', { id: 'shared', dir: '/nowhere' }), false,
+      'a relative scripts/ path without the expert id does not match')
+    assert.equal(commandTargetsExpertScripts('bash shared/skills/deploy/scripts/deploy.sh', { id: 'shared', dir: '/nowhere' }), true,
+      'the <id>/skills/<skill>/scripts/ segment matches without the absolute dir')
+    assert.equal(commandTargetsExpertScripts('node scripts/smoke.mjs', untrusted), false,
+      "another tool's plain scripts/ reference never matches")
+    assert.equal(commandTargetsExpertScripts('', untrusted), false, 'an empty command never matches')
+  }
+
+  // mountScriptGuard over a fake ctx.tools.guard: deny referencing bash
+  // calls, pass unrelated calls through, unmount cleanly, degrade on throw.
+  {
+    const mounted = []
+    let guardExec = null
+    const toolsService = {
+      guard(guardDef) {
+        mounted.push(guardDef)
+        guardExec = guardDef.exec
+        return () => { mounted.pop(); guardExec = null }
+      },
+    }
+    const gateAgent = makeFakeAgent('gate-hard')
+    const originalGet = gateAgent.ctx.get.bind(gateAgent.ctx)
+    gateAgent.ctx.get = (serviceName) => (serviceName === 'tools' ? toolsService : originalGet(serviceName))
+
+    const logs = []
+    const unguard = mountScriptGuard(gateAgent.ctx, untrusted, { warn: (m) => logs.push(m) })
+    assert.equal(mounted.length, 1, 'a callable tools.guard mounted the interceptor')
+    assert.ok(mounted[0].name.startsWith('expert-script-guard:shared'), 'the guard is labeled per expert')
+    assert.equal(logs.length, 0, 'a confirmed contract logs nothing')
+
+    // Deny: a bash call referencing the expert's scripts/ directory.
+    await assert.rejects(
+      () => guardExec({ name: 'bash', args: { command: `bash ${join(untrusted.dir, 'scripts', 'x.sh')}` } }, async (c) => ({ ok: true })),
+      /trust_scripts/,
+      'a referencing bash invocation is rejected with the unlock hint')
+    // Pass-through: an unrelated command reaches next().
+    let nextArg = null
+    const passResult = await guardExec({ name: 'bash', args: { command: 'node scripts/smoke.mjs' } }, async (c) => { nextArg = c; return { ok: true } })
+    assert.deepEqual(nextArg, { name: 'bash', args: { command: 'node scripts/smoke.mjs' } }, 'unrelated commands reach next() untouched')
+    assert.deepEqual(passResult, { ok: true })
+
+    unguard()
+    assert.equal(mounted.length, 0, 'the disposer unmounts the guard')
+    unguard()
+    assert.equal(mounted.length, 0, 'the disposer is idempotent')
+
+    // Degrade: a tools.guard that throws at registration → one warning.
+    const logs2 = []
+    const throwingCtx = { get: (serviceName) => (serviceName === 'tools' ? { guard: () => { throw new Error('bad shape') } } : undefined) }
+    mountScriptGuard(throwingCtx, untrusted, { warn: (m) => logs2.push(m) })
+    assert.equal(logs2.filter((m) => m.includes('拒绝注册')).length, 1, 'a throwing registration degrades with one warning')
+
+    // Full compose with a mountable guard: the disposer rides the group.
+    const agent3 = makeFakeAgent('gate-compose')
+    const originalGet3 = agent3.ctx.get.bind(agent3.ctx)
+    agent3.ctx.get = (serviceName) => (serviceName === 'tools' ? toolsService : originalGet3(serviceName))
+    const composition3 = await compose(agent3, untrusted, { warn: () => {} })
+    assert.equal(mounted.length, 1, 'compose mounted the hard guard for the untrusted expert')
+    composition3.dispose()
+    assert.equal(mounted.length, 0, 'composition dispose unmounts the hard guard')
+  }
 }
 
 rmSync(fixture, { recursive: true, force: true })

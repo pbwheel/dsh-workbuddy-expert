@@ -152,6 +152,8 @@ function brokenCard(dir, folderName, rootInfo, reason) {
     dir,
     broken: reason,
     skills: [],
+    trustScripts: false,
+    scriptsAllowed: false,
   }
 }
 
@@ -231,6 +233,9 @@ export async function scanExpertFolder(dir, folderName, rootInfo) {
     dir,
     roleText,
     trustScripts: fields.trust_scripts === 'true',
+    // Computed (ticket 04): user-rank roots always allow scripts/, project
+    // rank only with an explicit trust_scripts declaration.
+    scriptsAllowed: rootInfo.trust === 'user' || fields.trust_scripts === 'true',
     skills,
   }
 }
