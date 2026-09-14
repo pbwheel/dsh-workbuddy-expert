@@ -18,16 +18,27 @@
  *      refetch moves the ✓), no-session pick → STAGED draft (no POST),
  *      and the moment a session id appears the /api/after-create
  *      handshake fires EXACTLY ONCE and consumes the draft;
- *   5. apply(): one conversation.input.left registration (the verified
- *      seat), the scoped <style data-plugin> tag injected after the
- *      registrations and removed by the returned disposer (re-apply is
+ *   5. apply(): BOTH seat registrations (conversation.input.left selector +
+ *      settings.section market page, ticket 08), the two scoped
+ *      <style data-plugin> tags (one namespace per feature) injected after
+ *      the registrations and removed by the returned disposer (re-apply is
  *      idempotent);
  *   6. selector routes (src/selector-routes.js) over a fake webServer:
  *      GET /api/experts shape (+?sessionId → currentExpertId via
  *      stateOf), POST /api/switch and /api/after-create bodies and
  *      switcher/composeForCreation delegation, missing-agent degradation,
  *      405/403 rejection, the 4 KiB body cap, no-store on every JSON
- *      response, and full disposal.
+ *      response, and full disposal;
+ *   7. the market page (ticket 08): pure derivations (locale name chains,
+ *      category labels/chips with unknown-key fallback, three-way
+ *      stackable status × category filters crossed with zh/en search, card
+ *      actions per install state, team grouping/fold rules) and a
+ *      component machine over a scripted /api/state fixture — cards with
+ *      the installed/updatable/broken overlay, collapsed team group,
+ *      orphan + unmatched-broken sections, warnings fold, install confirm
+ *      pair → cancel reverts / confirm POSTs {id} to /api/install and
+ *      adopts the response's inline state, chip filter behavior, and zh
+ *      search narrowing.
  */
 
 import assert from 'node:assert/strict'
@@ -211,6 +222,36 @@ function findAll(node, predicate, out = []) {
   return out
 }
 
+/** Concatenated text content of a stub element node. */
+function textOf(node) {
+  if (node === null || node === undefined) return ''
+  if (typeof node === 'string') return node
+  if (Array.isArray(node)) return node.map(textOf).join('')
+  if (typeof node === 'object') return (node.children ?? []).map(textOf).join('')
+  return ''
+}
+
+/**
+ * One-shot expansion of component-typed nodes: the storing React stub keeps
+ * `el(Component, props)` children as references, so the market checks render
+ * them through a fresh throwaway hook context (AvatarFace's useState is the
+ * only hook below MarketPage itself, and the smoke never fires its setter).
+ */
+function expandTree(node) {
+  if (node === null || node === undefined) return []
+  if (Array.isArray(node)) return node.flatMap(expandTree)
+  if (typeof node !== 'object') return [node]
+  if (typeof node.type === 'function') {
+    const inst = { hookIndex: 0, hooks: {}, deps: {}, cleanups: {}, props: node.props, schedule() {} }
+    reactStub._bind(inst)
+    let out
+    try { out = node.type(node.props) } finally { reactStub._bind(null) }
+    return expandTree(out)
+  }
+  const children = (node.children ?? []).flatMap(expandTree)
+  return [{ ...node, children }]
+}
+
 const TABLE = {
   experts: [
     { id: 'editor', displayName: '剪辑师', description: '负责剪辑', order: 10 },
@@ -320,7 +361,206 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
   delete sandbox.fetch
 }
 
-// ── 5. apply(): slot registration + scoped style lifecycle ───────────────────
+// ── 4c. the market page (ticket 08): pure derivations ───────────────────────
+
+assert.equal(mod.localeNameOf({ id: 'x', name: 'Coder', zhName: '程序员' }, 'zh'), '程序员')
+assert.equal(mod.localeNameOf({ id: 'x', name: 'Coder', zhName: '程序员' }, 'en'), 'Coder')
+assert.equal(mod.localeNameOf({ id: 'x', name: 'Coder' }, 'zh'), 'Coder', 'zh falls back to the base name')
+assert.equal(mod.localeNameOf({ id: 'x' }, 'en'), 'x', 'the id is the terminal name fallback')
+
+assert.equal(mod.categoryLabelOf('02-Engineering', 'zh'), '工程开发')
+assert.equal(mod.categoryLabelOf('02-Engineering', 'en'), 'Engineering')
+assert.equal(mod.categoryLabelOf('99-Future', 'zh'), 'Future', 'unknown keys degrade to the prefix-stripped raw id')
+assert.equal(mod.categoryLabelOf('', 'zh'), '')
+
+assert.deepEqual([...mod.categoryChipsOf([
+  { id: 'a', category: '04-DataAI' },
+  { id: 'b', category: '02-Engineering' },
+  { id: 'c', category: '04-DataAI' },
+  { id: 'd' },
+]).map((chip) => `${chip.id}:${chip.count}`)],
+['02-Engineering:1', '04-DataAI:2', `${mod.NO_CATEGORY}:1`],
+'category chips: raw ids name-sorted with live counts, uncategorized last')
+
+// Three-way stackable filters: status chip × category chip × search.
+const MARKET_TABLE = [
+  { id: 'solo-a', name: 'Solo A', zhName: '独甲', description: 'does a', pluginDir: 'plug-a', skills: [], teamSize: 1, category: '02-Engineering', installed: false },
+  { id: 'team-1', name: 'Member One', zhName: '成员一', description: 'first member', pluginDir: 'plug-team', skills: ['cut'], teamSize: 3, category: '04-DataAI', installed: true, updatable: true },
+  { id: 'team-2', name: 'Member Two', zhName: '成员二', description: 'second member', pluginDir: 'plug-team', skills: [], teamSize: 3, category: '04-DataAI', installed: true },
+  { id: 'corrupt-one', name: 'Corrupt', zhName: '坏档', description: 'corrupt export', pluginDir: 'plug-c', skills: [], teamSize: 1, installed: true, broken: true },
+]
+assert.deepEqual([...mod.filterExperts(MARKET_TABLE, 'all', '', 'all').map((e) => e.id)],
+  ['solo-a', 'team-1', 'team-2', 'corrupt-one'], 'all keeps everything')
+assert.deepEqual([...mod.filterExperts(MARKET_TABLE, 'installed', '', 'all').map((e) => e.id)],
+  ['team-1', 'team-2', 'corrupt-one'], 'status chip: installed only')
+assert.deepEqual([...mod.filterExperts(MARKET_TABLE, 'updatable', '', 'all').map((e) => e.id)],
+  ['team-1'], 'status chip: updatable only')
+assert.deepEqual([...mod.filterExperts(MARKET_TABLE, 'all', '', '04-DataAI').map((e) => e.id)],
+  ['team-1', 'team-2'], 'category chip narrows independently')
+assert.deepEqual([...mod.filterExperts(MARKET_TABLE, 'installed', '', '04-DataAI').map((e) => e.id)],
+  ['team-1', 'team-2'], 'status × category stack')
+assert.deepEqual([...mod.filterExperts(MARKET_TABLE, 'installed', '成员', 'all').map((e) => e.id)],
+  ['team-1', 'team-2'], 'status × zh search stack (zh query hits zhName)')
+assert.deepEqual([...mod.filterExperts(MARKET_TABLE, 'all', 'member one', 'all').map((e) => e.id)],
+  ['team-1'], 'en query hits the base name field')
+assert.deepEqual([...mod.filterExperts(MARKET_TABLE, 'all', '工程', 'all').map((e) => e.id)],
+  ['solo-a'], 'the category\'s localized label is searchable too')
+
+// Card actions per state: broken → uninstall only (卸载重装 fix).
+assert.deepEqual([...mod.cardActionsOf({ installed: false })], ['install'])
+assert.deepEqual([...mod.cardActionsOf({ installed: true })], ['uninstall'])
+assert.deepEqual([...mod.cardActionsOf({ installed: true, updatable: true })], ['update', 'uninstall'])
+assert.deepEqual([...mod.cardActionsOf({ installed: true, broken: true })], ['uninstall'])
+
+assert.deepEqual([...mod.groupCardsByPlugin(MARKET_TABLE).map((group) => [group.pluginDir, group.team])],
+  [['plug-a', false], ['plug-team', true], ['plug-c', false]], 'team grouping by source plugin')
+assert.equal(mod.groupExpanded({}, 'plug-team', true), true, 'default: expanded under an active filter')
+assert.equal(mod.groupExpanded({}, 'plug-team', false), false, 'default: collapsed on the plain browse')
+assert.equal(mod.groupExpanded({ 'plug-team': false }, 'plug-team', true), false, 'an explicit fold wins over the default')
+const groupStats = mod.groupStatsOf([{ installed: true }, { updatable: true }, { installed: true, updatable: true }, {}])
+assert.equal(groupStats.installed, 2)
+assert.equal(groupStats.updatable, 2)
+assert.equal(groupStats.broken, 0)
+
+// ── 4d. the market page component machine over a scripted /api/state ────────
+
+// The vm realm has no host timers; inert stubs satisfy the confirm/notice
+// auto-revert effects without firing anything.
+sandbox.setTimeout = () => 0
+sandbox.clearTimeout = () => {}
+
+const MARKET_STATE = {
+  sourcePath: '~/wb/plugins',
+  pathExists: true,
+  revision: 7,
+  experts: MARKET_TABLE.map(({ broken, ...card }) => card), // broken is client-merged
+  installed: [
+    { id: 'team-1', dir: '/x/team-1', sourcePath: '~/wb/plugins', pluginDir: 'plug-team', fingerprint: 'f1', importedAt: '2026-01-02T03:04:05Z', updatable: true },
+    { id: 'team-2', dir: '/x/team-2', sourcePath: '~/wb/plugins', pluginDir: 'plug-team', fingerprint: 'f2', importedAt: '2026-01-02T03:04:05Z', updatable: false },
+    { id: 'corrupt-one', dir: '/x/corrupt-one', sourcePath: '~/wb/plugins', pluginDir: 'plug-c', fingerprint: 'f3', importedAt: '2026-01-02T03:04:05Z', updatable: false },
+  ],
+  broken: [
+    { id: 'corrupt-one', dir: '/x/corrupt-one', reason: '清单缺失，请卸载重装' },
+    { id: 'gone-broken', dir: '/x/gone-broken', reason: '清单缺失，请卸载重装' },
+  ],
+  orphans: [
+    { id: 'old-expert', dir: '/x/old-expert', sourcePath: '~/other-source', pluginDir: 'old-plug', importedAt: '2025-12-31T23:59:59Z' },
+  ],
+  warnings: ['duplicate expert id "x" skipped', 'source path does not exist: ~/nope'],
+}
+
+{
+  // The POST /api/install answer carries the fresh state inline (engine
+  // shape) with solo-a newly installed — no follow-up refetch needed.
+  const afterInstall = {
+    ...MARKET_STATE,
+    revision: 8,
+    experts: MARKET_STATE.experts.map((e) => (e.id === 'solo-a' ? { ...e, installed: true, updatable: false } : e)),
+    installed: [...MARKET_STATE.installed, { id: 'solo-a', dir: '/x/solo-a', fingerprint: 'f9', importedAt: '2026-02-01T00:00:00Z', updatable: false }],
+  }
+  const script = makeFetchScript([
+    { method: 'POST', url: '/dsh-workbuddy-expert/api/install', body: { id: 'solo-a', changed: true, state: afterInstall } },
+  ])
+  sandbox.fetch = script.fetchStub
+  const view = renderComponent(mod.MarketPage, {
+    t, getLocale: () => 'zh', initialState: MARKET_STATE,
+  })
+  // The expanded tree: component-typed children (cards, rows, group headers)
+  // rendered one-shot so host-element queries can see them.
+  const page = () => expandTree(view.tree())[0]
+
+  const cardNodes = () => findAll(page(), (n) => n.type === 'li' && n.props.className === 'wbx-card')
+  const chipByText = (text) => findAll(page(),
+    (n) => n.type === 'button' && n.props.className === 'wbx-chip' && textOf(n).startsWith(text))[0]
+  const cardButtons = (card) => findAll(card,
+    (n) => n.type === 'button' && n.props.className === 'wbx-btn').filter((b) => textOf(b) !== t('cancel'))
+
+  // Grid: solo card + corrupt card render; the team collapses behind its
+  // group header on the plain browse.
+  let cards = cardNodes()
+  assert.deepEqual(cards.map((card) => card.props['data-installed'] === 'true'), [false, true],
+    'cards render with the installed flag; team members hidden behind the collapsed group')
+  assert.ok(findAll(page(), (n) => n.type === 'button' && n.props.className === 'wbx-group-head').length === 1,
+    'the team renders one collapsible group header')
+
+  // corrupt-one merged the broken flag: ⚠ mark + uninstall-only actions.
+  const corrupt = cards.find((card) => findAll(card, (n) => n.type === 'span' && n.props.className === 'wbx-id')[0].children[0] === 'corrupt-one')
+  assert.equal(corrupt.props['data-broken'], 'true')
+  assert.ok(findAll(corrupt, (n) => n?.props?.['data-kind'] === 'bad').length >= 1, 'the ⚠ broken mark rides the card')
+  assert.deepEqual(cardButtons(corrupt).map((b) => textOf(b)), ['卸载'], 'broken export → uninstall only')
+
+  // Orphans + broken sections render with their provenance.
+  const orphanRows = findAll(page(), (n) => n.type === 'li' && n.props.className === 'wbx-orphan')
+  assert.equal(orphanRows.length, 2, 'one orphan row + one unmatched broken row')
+  assert.ok(String(findAll(orphanRows[1], (n) => n?.props?.className === 'wbx-orphan-meta')[0]?.children[0]).includes('~/other-source'),
+    'the orphan row carries its source provenance')
+  assert.ok(String(findAll(orphanRows[0], (n) => n?.props?.className === 'wbx-orphan-meta')[0]?.children[0]).includes('清单缺失'),
+    'the unmatched broken row carries the host reason')
+
+  // Warnings fold: collapsed by default, expands on click.
+  const warnToggle = findAll(page(), (n) => n.type === 'button' && n.props.className === 'wbx-warns-toggle')[0]
+  assert.equal(warnToggle.props['aria-expanded'], 'false')
+  assert.equal(findAll(page(), (n) => n.type === 'ul' && n.props.className === 'wbx-warns-list').length, 0)
+  warnToggle.props.onClick()
+  view.rerender()
+  assert.equal(findAll(page(), (n) => n.type === 'ul' && n.props.className === 'wbx-warns-list').length, 1,
+    'the warnings list expands')
+
+  // Install: confirm pair appears, cancel reverts, confirm POSTs {id}.
+  const solo = cards.find((card) => findAll(card, (n) => n.type === 'span' && n.props.className === 'wbx-id')[0].children[0] === 'solo-a')
+  const installBtn = cardButtons(solo).find((b) => textOf(b) === '安装')
+  installBtn.props.onClick()
+  view.rerender()
+  let confirm = findAll(page(), (n) => n.type === 'button' && textOf(n) === t('confirmInstall'))[0]
+  assert.ok(confirm !== undefined, 'the install swaps in its inline confirmation')
+  findAll(page(), (n) => n.type === 'button' && textOf(n) === t('cancel'))[0].props.onClick()
+  view.rerender()
+  assert.equal(findAll(page(), (n) => n.type === 'button' && textOf(n) === t('confirmInstall')).length, 0,
+    'cancel reverts the confirmation')
+  cardButtons(solo).find((b) => textOf(b) === '安装').props.onClick()
+  view.rerender()
+  confirm = findAll(page(), (n) => n.type === 'button' && textOf(n) === t('confirmInstall'))[0]
+  confirm.props.onClick()
+  await flush()
+  view.rerender()
+  assert.equal(script.calls.length, 1, 'exactly one POST fired (state adopted from the response)')
+  assert.deepEqual(script.calls[0], {
+    method: 'POST', url: '/dsh-workbuddy-expert/api/install', body: JSON.stringify({ id: 'solo-a' }),
+  }, 'the confirm POSTs the expert id to /api/install')
+  cards = cardNodes()
+  const soloAfter = cards.find((card) => findAll(card, (n) => n.type === 'span' && n.props.className === 'wbx-id')[0].children[0] === 'solo-a')
+  assert.equal(soloAfter.props['data-installed'], 'true', 'the card flips ✓ within the adopted state')
+  assert.deepEqual(cardButtons(soloAfter).map((b) => textOf(b)), ['卸载'])
+
+  // Chip filters: 已装 narrows to the installed cards; the category chip
+  // stacks on top; 清除筛选 restores.
+  chipByText(t('filterInstalled')).props.onClick()
+  view.rerender()
+  assert.deepEqual(cardNodes().map((card) => findAll(card, (n) => n?.props?.className === 'wbx-id')[0].children[0]),
+    ['solo-a', 'team-1', 'team-2', 'corrupt-one'],
+    'the installed chip filters the grid; the active filter expands the team in place')
+  const dataChip = chipByText(mod.categoryLabelOf('04-DataAI', 'zh'))
+  dataChip.props.onClick()
+  view.rerender()
+  assert.deepEqual(cardNodes().map((card) => findAll(card, (n) => n?.props?.className === 'wbx-id')[0].children[0]),
+    ['team-1', 'team-2'], 'status × category stacks; matched team members expand in place')
+  chipByText(t('filterAll')).props.onClick()
+  chipByText(t('categoryAll')).props.onClick()
+  view.rerender()
+  assert.equal(cardNodes().length, 2, 'resetting both chips restores the plain browse (team collapsed again)')
+
+  // Search: a zh query narrows the grid through the same lane.
+  const search = findAll(page(), (n) => n.type === 'input' && n.props.className === 'wbx-search')[0]
+  search.props.onChange({ target: { value: '成员一' } })
+  view.rerender()
+  assert.deepEqual(cardNodes().map((card) => findAll(card, (n) => n?.props?.className === 'wbx-id')[0].children[0]),
+    ['team-1'], 'the zh query matches the zhName field')
+  delete sandbox.fetch
+}
+
+delete sandbox.setTimeout
+delete sandbox.clearTimeout
+
 
 function makeDocumentStub() {
   const tags = []
@@ -349,44 +589,52 @@ function makeDocumentStub() {
   // The bundle runs in the vm realm: its `document` resolves against the
   // sandbox, so the stub is installed there.
   sandbox.document = document
-  const slotDisposers = []
-  let seatSetup = null
-  let rendered = null
+  const seatSetups = new Map()
+  const renderedBySeat = new Map()
   const slots = {
     inject(seat, setup) {
-      assert.equal(seat, 'conversation.input.left', 'the one seat is the verified composer row')
-      seatSetup = setup
+      assert.ok(['conversation.input.left', 'settings.section'].includes(seat),
+        `known seat: ${seat}`)
+      seatSetups.set(seat, setup)
       const off = setup() // the runtime runs the setup at inject time
-      return () => { seatSetup = null; if (typeof off === 'function') off() }
+      return () => { seatSetups.delete(seat); if (typeof off === 'function') off() }
     },
     register(definition, render) {
-      assert.equal(definition.name, 'conversation.input.left')
-      assert.equal(definition.id, 'workbuddy-expert')
-      rendered = render
-      const off = () => { rendered = null }
-      slotDisposers.push(off)
-      return off
+      assert.equal(definition.name, seatSetups.has('settings.section') && definition.id === 'workbuddy-expert' && definition.name === 'settings.section'
+        ? 'settings.section' : definition.name)
+      renderedBySeat.set(definition.name, render)
+      return () => renderedBySeat.delete(definition.name)
     },
   }
   const ctx = { slots, logger: { warn: (message) => { throw new Error(message) } } }
   const dispose = mod.apply(ctx)
-  assert.equal(typeof seatSetup === 'function' && typeof rendered === 'function', true,
-    'inject ran the setup and the seat registered')
-  assert.equal(document.tags.length, 1, 'the scoped style tag is injected')
-  assert.equal(document.tags[0].dataset.plugin, 'dsh-workbuddy-expert')
-  assert.ok(document.tags[0].textContent.includes('.wbe-btn'), 'the tag carries the selector CSS')
+  assert.equal(typeof seatSetups.get('conversation.input.left') === 'function' &&
+    typeof renderedBySeat.get('conversation.input.left') === 'function', true,
+    'inject ran the setup and the composer seat registered')
+  assert.equal(typeof seatSetups.get('settings.section') === 'function' &&
+    typeof renderedBySeat.get('settings.section') === 'function', true,
+    'the settings.section seat registered (ticket 08)')
 
-  const tree = rendered({ session: { id: 's' } })
-  assert.equal(tree.type, mod.ExpertSelector, 'the seat renders the selector component')
+  // One style tag per feature namespace: .wbe- selector + .wbx- market.
+  assert.equal(document.tags.length, 2, 'both scoped style tags are injected')
+  assert.ok(document.tags.every((tag) => tag.dataset.plugin === 'dsh-workbuddy-expert'))
+  assert.ok(document.tags.some((tag) => tag.textContent.includes('.wbe-btn')), 'the selector CSS rides one tag')
+  assert.ok(document.tags.some((tag) => tag.textContent.includes('.wbx-chip')), 'the market CSS rides the other tag')
+
+  const tree = renderedBySeat.get('conversation.input.left')({ session: { id: 's' } })
+  assert.equal(tree.type, mod.ExpertSelector, 'the composer seat renders the selector component')
   assert.equal(tree.props.session.id, 's')
 
-  dispose()
-  assert.equal(document.tags.length, 0, 'the disposer removes the style tag')
-  assert.equal(rendered, null, 'the disposer drops the slot registration')
+  const page = renderedBySeat.get('settings.section')()
+  assert.equal(page.type, mod.MarketPage, 'the settings seat renders the market page')
 
-  // Re-apply after dispose is idempotent (fresh tag, fresh registration).
+  dispose()
+  assert.equal(document.tags.length, 0, 'the disposer removes both style tags')
+  assert.equal(renderedBySeat.size, 0, 'the disposer drops every slot registration')
+
+  // Re-apply after dispose is idempotent (fresh tags, fresh registrations).
   const dispose2 = mod.apply(ctx)
-  assert.equal(document.tags.length, 1)
+  assert.equal(document.tags.length, 2)
   dispose2()
   assert.equal(document.tags.length, 0)
   delete sandbox.document
