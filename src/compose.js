@@ -18,11 +18,18 @@
  * tools.restrict (ticket 10, design §4 step c): an expert declaring
  * tools.allow mounts a scoped restriction inside the same dispose group —
  * registered last so the reverse dispose lifts it FIRST on switch-away.
+ *
+ * agent.cordis.yml rows (ticket 11, design §10 P3): an expert declaring
+ * composition rows gets them activated in the agent scope (see
+ * cordis-lines.js for the supported subset and the scripts-equivalent trust
+ * gate). Rows register AFTER the restriction — the reverse dispose lifts
+ * them FIRST, before the restrict disposer, then the role section.
  */
 
 import { readdir, stat } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 
+import { mountCordisLines } from './cordis-lines.js'
 import { mountToolsAllowlist } from './restrict.js'
 import { mountScriptGuard, trustParagraph } from './trust.js'
 
@@ -217,7 +224,13 @@ export async function compose(agent, expertCard, logger = {}) {
   // returns a prompt-only paragraph that rides the role section below.
   const restriction = mountToolsAllowlist(agentCtx, expertCard.toolsAllow, logger, expertCard.id)
 
-  const text = [roleSectionTextWithTrust(expertCard), fallbackCatalog, restriction.paragraph]
+  // agent.cordis.yml rows (ticket 11): activate inside the same dispose
+  // group, after the restriction — lifted FIRST on switch-away. Untrusted
+  // project experts get the rows skipped with a paragraph instead; a folder
+  // without the file pays nothing (nothing is probed).
+  const lines = await mountCordisLines(agentCtx, expertCard, logger)
+
+  const text = [roleSectionTextWithTrust(expertCard), fallbackCatalog, restriction.paragraph, lines.paragraph]
     .filter((part) => part !== '')
     .join('\n\n')
 
@@ -234,10 +247,10 @@ export async function compose(agent, expertCard, logger = {}) {
     expertId: expertCard.id,
     generation,
     dispose() {
-      // Reverse order (design §4): the restrict disposer was registered last
-      // → lifted FIRST on switch-away, then the role section, then skills in
-      // reverse registration order.
-      for (const dispose of [...disposers, ...skillDisposers, guardDisposer, restriction.dispose].reverse()) {
+      // Reverse order (design §4): the composition rows were registered last
+      // → lifted FIRST on switch-away (before the restrict disposer), then
+      // the role section, then skills in reverse registration order.
+      for (const dispose of [...disposers, ...skillDisposers, guardDisposer, restriction.dispose, lines.dispose].reverse()) {
         try {
           dispose()
         } catch (error) {

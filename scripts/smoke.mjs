@@ -58,6 +58,15 @@
  *      on switch-away, an empty allow never calls restrict, a throwing
  *      restrict degrades to ONE warning + a prompt paragraph naming the
  *      allowlist, and a real switch away lifts the restriction.
+ * 15. agent.cordis.yml composition-row passthrough (ticket 11): row-file
+ *      parsing/validation (valid rows with nested config, empty list, bare
+ *      package name, cordis: builtin, unknown key, corrupt text → broken
+ *      reasons), zero overhead without the file (ctx never probed), valid
+ *      rows activate per agent scope via ctx.plugin and dispose FIRST in
+ *      the reverse group, an untrusted project expert's rows are skipped
+ *      with the guard paragraph, a trusting project expert's rows are
+ *      active, and a failed module import degrades to one warning per row
+ *      plus a paragraph with every partial mount disposed.
  */
 
 import assert from 'node:assert/strict'
@@ -1002,6 +1011,237 @@ fixtureWrite(userRoot, 'tool-bad/role.md', 'body\n')
     assert.equal(typeof result.dispose, 'function', 'an empty allow returns a callable no-op disposer')
     assert.equal(result.paragraph, '', 'an empty allow contributes no paragraph')
     result.dispose()
+  }
+}
+
+// ── 15. agent.cordis.yml composition-row passthrough (ticket 11) ───────────
+
+const { CORDIS_LINES_GUARD_PARAGRAPH, cordisLinesDegradeParagraph, mountCordisLines, parseAgentCordisYml, validateAgentCordisRows } =
+  await import(join(root, 'src', 'cordis-lines.js'))
+
+// Parser + validator (pure text, no fixture needed).
+{
+  const valid = parseAgentCordisYml([
+    '- id: demo-tools',
+    '  name: ./plugins/demo-tools.js',
+    '  config:',
+    '    greeting: "hello"',
+    '    limit: 5',
+    '    flag: true',
+    '    tags: [a, "b c"]',
+    '    nested:',
+    '      deep: value',
+    '- name: ../shared/extra.js',
+  ].join('\n'))
+  assert.equal(valid.broken, undefined)
+  const validated = validateAgentCordisRows(valid.rows)
+  assert.equal(validated.broken, undefined, 'the supported row subset validates')
+  assert.deepEqual(validated.rows[0], {
+    id: 'demo-tools',
+    name: './plugins/demo-tools.js',
+    config: { greeting: 'hello', limit: 5, flag: true, tags: ['a', 'b c'], nested: { deep: 'value' } },
+  }, 'config parses into JSON-safe values incl. nested mapping and flow list')
+  assert.deepEqual(validated.rows[1], { id: undefined, name: '../shared/extra.js', config: undefined },
+    'an id-less ../ row validates (id and config optional)')
+
+  const reasons = (text) => {
+    const parsed = parseAgentCordisYml(text)
+    return parsed.broken ?? validateAgentCordisRows(parsed.rows).broken ?? ''
+  }
+  assert.ok(reasons('- name: "@deepseek-ai/some-tool"\n').includes('must be a relative module path'),
+    'a bare package specifier is rejected (no per-session resolution path)')
+  assert.ok(reasons('- id: g\n  name: cordis:group\n  group: true\n').includes('unsupported key'),
+    'a cordis: builtin/group row is rejected as an unsupported organization row')
+  assert.ok(reasons('- id: x\n  name: ./p.js\n  inject: [tools]\n').includes('unsupported key'),
+    'row-level inject is rejected')
+  assert.ok(reasons('- id: x\n  name: ./p.js\n  when: env.foo\n').includes('unsupported key'),
+    'row-level when is rejected')
+  assert.ok(reasons('- name: ./p.js\n- name: ./p.js\n  id: same\n- id: same\n  name: ./q.js\n').includes('duplicate row id'),
+    'duplicate ids are rejected')
+  assert.ok(reasons('id: not-a-list\n').includes('top-level list'),
+    'a non-list file is rejected')
+  assert.ok(reasons('garbage line\n').length > 0, 'corrupt text is a broken reason, never silent')
+  assert.ok(reasons('- name: ./p.js\n  config: [1, 2]\n').includes('config" must be a mapping'),
+    'a list config is rejected')
+  assert.ok(parseAgentCordisYml('[]\n').broken === undefined && validateAgentCordisRows(parseAgentCordisYml('[]\n').rows).broken === undefined,
+    'an empty row list parses to zero rows')
+}
+
+// Fixture experts (user + project roots), scanned AFTER every earlier
+// full-inventory assertion.
+fixtureWrite(userRoot, 'cordis-lines/expert.yml', 'id: cordis-lines\ndisplay_name: 组装行专家\n')
+fixtureWrite(userRoot, 'cordis-lines/role.md', '你是携带组装行的专家。\n')
+fixtureWrite(userRoot, 'cordis-lines/agent.cordis.yml', [
+  '- id: demo-tools',
+  '  name: ./plugins/demo-tools.js',
+  '  config:',
+  '    greeting: hello',
+  '- name: ./plugins/extra.js',
+].join('\n'))
+fixtureWrite(userRoot, 'cordis-lines/plugins/demo-tools.js',
+  'export default function demoTools(ctx, config) { return () => {} }\n')
+fixtureWrite(userRoot, 'cordis-lines/plugins/extra.js',
+  'export default { apply(ctx) { return () => {} } }\n')
+
+fixtureWrite(userRoot, 'cordis-empty/expert.yml', 'id: cordis-empty\n')
+fixtureWrite(userRoot, 'cordis-empty/role.md', 'body\n')
+fixtureWrite(userRoot, 'cordis-empty/agent.cordis.yml', '[]\n')
+
+fixtureWrite(userRoot, 'cordis-bad/expert.yml', 'id: cordis-bad\n')
+fixtureWrite(userRoot, 'cordis-bad/role.md', 'body\n')
+fixtureWrite(userRoot, 'cordis-bad/agent.cordis.yml', '- id: g\n  name: cordis:group\n  group: true\n')
+
+fixtureWrite(userRoot, 'cordis-corrupt/expert.yml', 'id: cordis-corrupt\n')
+fixtureWrite(userRoot, 'cordis-corrupt/role.md', 'body\n')
+fixtureWrite(userRoot, 'cordis-corrupt/agent.cordis.yml', 'garbage line\n')
+
+fixtureWrite(userRoot, 'cordis-missing/expert.yml', 'id: cordis-missing\n')
+fixtureWrite(userRoot, 'cordis-missing/role.md', 'body\n')
+fixtureWrite(userRoot, 'cordis-missing/agent.cordis.yml', '- name: ./plugins/not-there.js\n')
+
+const projectExperts = join(projectRoot, '.agents', 'experts')
+fixtureWrite(projectExperts, 'cordis-proj/expert.yml', 'id: cordis-proj\ndisplay_name: 未信项目组装行\n')
+fixtureWrite(projectExperts, 'cordis-proj/role.md', 'body\n')
+fixtureWrite(projectExperts, 'cordis-proj/agent.cordis.yml', '- name: ./plugins/never.js\n')
+fixtureWrite(projectExperts, 'cordis-proj/plugins/never.js', 'export default function () {}\n')
+
+fixtureWrite(projectExperts, 'cordis-proj-trusted/expert.yml', 'id: cordis-proj-trusted\ntrust_scripts: true\n')
+fixtureWrite(projectExperts, 'cordis-proj-trusted/role.md', 'body\n')
+fixtureWrite(projectExperts, 'cordis-proj-trusted/agent.cordis.yml', '- name: ./plugins/demo-tools.js\n')
+fixtureWrite(projectExperts, 'cordis-proj-trusted/plugins/demo-tools.js',
+  'export default function demoTools(ctx, config) { return () => {} }\n')
+
+/** A fake agent whose ctx records ctx.plugin activations. */
+function makeLineAgent(sessionId) {
+  const agent = makeFakeAgent(sessionId)
+  const started = []
+  const disposalOrder = agent.disposalOrder ?? (agent.disposalOrder = [])
+  agent.ctx.plugin = (plugin, config) => {
+    const record = { plugin, config, disposed: false }
+    started.push(record)
+    return { dispose() { record.disposed = true; disposalOrder.push('cordis-lines') } }
+  }
+  agent.startedRows = started
+  return agent
+}
+
+{
+  const fresh = await scanDiscoveryRoots(roots)
+  const cards = new Map(fresh.experts.map((expert) => [expert.id, expert]))
+
+  // Registry: presence detection + row parsing land on the card; corrupt or
+  // unsupported files are broken rows with reasons.
+  assert.equal(cards.get('cordis-lines').broken, undefined)
+  assert.equal(cards.get('cordis-lines').cordisLines.rows.length, 2, 'the card carries the parsed rows')
+  assert.ok(cards.get('cordis-lines').cordisLines.path.endsWith(join('cordis-lines', 'agent.cordis.yml')))
+  assert.equal(cards.get('shared').cordisLines, undefined, 'a folder without the file carries no rows field')
+  assert.equal(cards.get('cordis-empty').broken, undefined)
+  assert.equal(cards.get('cordis-empty').cordisLines.rows.length, 0, 'an empty row list is zero rows, not broken')
+  assert.ok(cards.get('cordis-bad').broken.includes('agent.cordis.yml invalid') && cards.get('cordis-bad').broken.includes('unsupported key'),
+    'an unsupported row kind is a broken row naming the reason')
+  assert.ok(cards.get('cordis-corrupt').broken.includes('agent.cordis.yml invalid'),
+    'a corrupt file is a broken row, never silently ignored')
+
+  // Zero overhead: no file → nothing probed, no paragraph.
+  {
+    const probed = []
+    const hostileCtx = { plugin: () => { probed.push('plugin') }, get: () => { probed.push('get') } }
+    const result = await mountCordisLines(hostileCtx, cards.get('shared'), { warn: () => {} })
+    assert.deepEqual(probed, [], 'a card without rows never probes the context')
+    assert.equal(result.paragraph, '', 'no paragraph without rows')
+    result.dispose()
+  }
+
+  // Valid rows activate in the agent scope and dispose FIRST in the group.
+  {
+    const agent = makeLineAgent('lines-session')
+    const logs = []
+    const composition = await compose(agent, cards.get('cordis-lines'), { warn: (m) => logs.push(m) })
+    assert.equal(agent.startedRows.length, 2, 'both rows started via agent ctx.plugin')
+    assert.equal(typeof agent.startedRows[0].plugin, 'function', 'a default-export function module unwraps to the plugin')
+    assert.deepEqual(agent.startedRows[0].config, { greeting: 'hello' }, 'row config rides through verbatim')
+    assert.equal(agent.startedRows[0].config, cards.get('cordis-lines').cordisLines.rows[0].config,
+      'the config object identity is the parsed row (no re-serialization)')
+    assert.equal(typeof agent.startedRows[1].plugin.apply, 'function', 'an { apply } object module unwraps to the plugin')
+    assert.equal(agent.startedRows[1].config, undefined, 'an absent config passes undefined')
+    assert.equal(logs.length, 0, 'a healthy rows mount logs nothing')
+    const text = agent.sections.get(ROLE_SECTION_NAME).text
+    assert.ok(!text.includes(CORDIS_LINES_GUARD_PARAGRAPH) && !text.includes('组装行激活失败'),
+      'no skip/degrade paragraph when rows activated')
+
+    const originalDelete = agent.sections.delete.bind(agent.sections)
+    agent.sections.delete = (name) => { agent.disposalOrder.push(`section:${name}`); return originalDelete(name) }
+    composition.dispose()
+    assert.ok(agent.startedRows.every((row) => row.disposed), 'dispose stopped every started row fiber')
+    assert.deepEqual(agent.disposalOrder, ['cordis-lines', 'cordis-lines', `section:${ROLE_SECTION_NAME}`],
+      'the rows are lifted FIRST on switch-away, before the role section')
+  }
+
+  // Untrusted project expert: rows skipped + guard paragraph (ticket 04 mirror).
+  {
+    const agent = makeLineAgent('lines-untrusted')
+    const logs = []
+    const composition = await compose(agent, cards.get('cordis-proj'), { warn: (m) => logs.push(m) })
+    assert.equal(agent.startedRows.length, 0, 'an untrusted project expert mounts NO rows')
+    assert.ok(agent.sections.get(ROLE_SECTION_NAME).text.includes(CORDIS_LINES_GUARD_PARAGRAPH),
+      'the role section explains why the rows are skipped')
+    assert.ok(agent.sections.get(ROLE_SECTION_NAME).text.includes('trust_scripts: true'),
+      'the paragraph names the unlock')
+    assert.equal(logs.filter((m) => m.includes('组装行')).length, 0,
+      'the rows skip itself is by design, not a degrade warning (the script-guard degrade warning may still ride)')
+    composition.dispose()
+    assert.equal(agent.startedRows.filter((row) => row.disposed).length, 0)
+  }
+
+  // Trusting project expert: rows active (trust_scripts: true reuses the
+  // ticket-04 gate).
+  {
+    const agent = makeLineAgent('lines-trusted')
+    const composition = await compose(agent, cards.get('cordis-proj-trusted'), { warn: () => {} })
+    assert.equal(agent.startedRows.length, 1, 'a trusting project expert activates its rows')
+    assert.ok(agent.sections.get(ROLE_SECTION_NAME).text.includes(SCRIPT_TRUST_NOTICE_PARAGRAPH),
+      'the script release notice still rides along')
+    composition.dispose()
+    assert.equal(agent.startedRows[0].disposed, true)
+  }
+
+  // Degrade: a row whose module cannot be imported → one warning per row,
+  // a paragraph, and no partial mounts left behind.
+  {
+    const agent = makeLineAgent('lines-missing')
+    const logs = []
+    const composition = await compose(agent, cards.get('cordis-missing'), { warn: (m) => logs.push(m) })
+    assert.equal(agent.startedRows.length, 0, 'a failed import mounts nothing')
+    assert.equal(logs.filter((m) => m.includes('not-there.js')).length, 1, 'exactly one warning for the failed row')
+    const text = agent.sections.get(ROLE_SECTION_NAME).text
+    assert.ok(text.includes(cordisLinesDegradeParagraph(['./plugins/not-there.js'])),
+      'the degrade paragraph names the failed row')
+    composition.dispose()
+  }
+
+  // Degrade: agent ctx without a ctx.plugin contract → one warning + paragraph.
+  {
+    const agent = makeFakeAgent('lines-nocontract')
+    const logs = []
+    const composition = await compose(agent, cards.get('cordis-lines'), { warn: (m) => logs.push(m) })
+    assert.equal(logs.filter((m) => m.includes('ctx.plugin')).length, 1,
+      'exactly one warning when the scoped plugin contract is unavailable')
+    assert.ok(agent.sections.get(ROLE_SECTION_NAME).text.includes('组装行激活失败'),
+      'the degraded role section carries the paragraph')
+    composition.dispose()
+  }
+
+  // Switch integration: switching away disposes the rows with the composition.
+  {
+    const switcher = createSwitcher({
+      registry: createRegistry({ roots, scan: scanDiscoveryRoots, ttlMs: 600_000 }),
+      logger: { warn: () => {} },
+    })
+    const agent = makeLineAgent('lines-switch')
+    assert.equal((await switcher.switch(agent, 'cordis-lines')).kind, 'success')
+    assert.equal(agent.startedRows.length, 2, 'the switch activated the declared rows')
+    assert.equal((await switcher.switch(agent, 'shared')).kind, 'success')
+    assert.ok(agent.startedRows.every((row) => row.disposed), 'switching away stopped every row fiber')
   }
 }
 

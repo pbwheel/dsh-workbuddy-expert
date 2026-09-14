@@ -19,6 +19,7 @@ import { readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { sanitizeText } from './sanitize.js'
+import { parseAgentCordisYml, validateAgentCordisRows } from './cordis-lines.js'
 
 /** Folder/id rule (design §1): kebab-case over [a-z0-9]. */
 export const ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -321,6 +322,31 @@ export async function scanExpertFolder(dir, folderName, rootInfo) {
     return brokenCard(dir, folderName, rootInfo, `role.md unreadable: ${messageOf(error)}`)
   }
 
+  // agent.cordis.yml (design §1 optional file, ticket 11): presence is
+  // detected here and the rows parse+validate ONCE per scan — a folder
+  // without the file pays nothing. Corrupt files / unsupported row kinds are
+  // broken reasons, never silently ignored; compose-time activation and the
+  // trust gate live in cordis-lines.js.
+  let cordisLines
+  const linesPath = join(dir, 'agent.cordis.yml')
+  if (await isFile(linesPath)) {
+    let rawLines
+    try {
+      rawLines = await readFile(linesPath, 'utf8')
+    } catch (error) {
+      return brokenCard(dir, folderName, rootInfo, `agent.cordis.yml unreadable: ${messageOf(error)}`)
+    }
+    const parsed = parseAgentCordisYml(rawLines)
+    if (parsed.broken !== undefined) {
+      return brokenCard(dir, folderName, rootInfo, `agent.cordis.yml invalid: ${parsed.broken}`)
+    }
+    const validated = validateAgentCordisRows(parsed.rows)
+    if (validated.broken !== undefined) {
+      return brokenCard(dir, folderName, rootInfo, `agent.cordis.yml invalid: ${validated.broken}`)
+    }
+    cordisLines = { path: linesPath, rows: validated.rows }
+  }
+
   // skills/ follows the dsh skill convention: one skill per subdirectory
   // with a SKILL.md. Subdirectories without SKILL.md stay listed (flagged)
   // rather than dropped — the listing never invents inventory.
@@ -361,6 +387,9 @@ export async function scanExpertFolder(dir, folderName, rootInfo) {
     // Declared tool whitelist (ticket 10): [] = 不限制; compose mounts the
     // scoped tools.restrict only for a non-empty array.
     toolsAllow: toolsInfo.allow ?? [],
+    // Declared composition rows (ticket 11): undefined when no file — zero
+    // overhead for folders without agent.cordis.yml.
+    cordisLines,
     skills,
   }
 }
