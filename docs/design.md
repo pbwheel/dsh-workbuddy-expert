@@ -205,7 +205,7 @@ P0 结束即可手写专家 + `/expert` 完整验证软切换链路（零 UI、�
 
 | # | 断言 | 结论 |
 |---|---|---|
-| 1 | `tools.restrict` 分层叠加 | **签名级证实**：`restrict(filter): () => void` 返回 disposer；`tools.get(name, scope?)` / `schemas(scope?)` 证实 scope 感知注册表。`ToolRestriction` 字段形（allow/deny）本地不可见（编译产物类型已剥离；Inspect 精确查询路径损坏）——按 wb-market spawn `toolFilter: { deny }` 同形假设，**#03 集成时以运行时探针确认** |
+| 1 | `tools.restrict` 分层叠加 | **完全证实**（ticket 10 落地时从 dsh-tools 源码实证）：`restrict({ allow?, deny? })` 作用于 agent scoped context，返回 disposer；空 `allow: []` 在宿主层=全禁（故 registry 把声明为空映射为"不限制"，永不传 `[]`）；未知全局工具名由宿主 loud 校验 |
 | 2 | skill digest 空替换 | **分层 scope 证实**：skills 服务自述"Layered registry of skill providers, the host+per-scope shape the tools registry established"，`register(skill): () => void` 返回 disposer。digest/inject 替换机制与空替换路径本地不可见，维持文档断言，#03 smoke 覆盖空 skills 专家用例 |
 | 3 | `agent.inject()` 时序 | **未证实**（Agent 对象方法，不在 Service 目录）：维持文档断言，#03 集成验证时观察生效边界，异常则退化为切换后首条消息附加说明 |
 | 4 | `ctx.commands` 契约 | **证实**：`commands.register(definition): () => void`（disposer）、`find(agent, name)`、`execute(agent, line, attachments, signal)`——人类命令路径，不经模型轮次。CommandDefinition 字段形不可见：注册代码保持防御式（小函数隔离，#02 已按此实现） |
