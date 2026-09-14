@@ -17,6 +17,7 @@ import { join, resolve } from 'node:path'
 
 import { registerExpertCommand } from './command.js'
 import { buildDiscoveryRoots, createRegistry } from './registry.js'
+import { createSwitcher } from './switch.js'
 import { watchRoots } from './watch.js'
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -58,6 +59,11 @@ export function apply(ctx, config = {}) {
 
   const registry = createRegistry({ roots })
 
+  // Soft-switch transaction manager (ticket 03): serialized per session,
+  // `expert/selected` events, agent-scope compositions. The session-creation
+  // helper (composeForCreation) is exposed on the service for ticket 05's UI.
+  const switcher = createSwitcher({ registry, logger: { warn } })
+
   // Watcher: root add/remove reflects without restart (invalidates the cache;
   // list()'s TTL bounds staleness if an event is ever missed).
   ctx.effect(
@@ -71,13 +77,17 @@ export function apply(ctx, config = {}) {
       warn('ctx.reflect.provide is unavailable — the ctx.experts service was not published')
       return () => {}
     }
-    return ctx.reflect.provide('experts', { list: () => registry.list() })
+    return ctx.reflect.provide('experts', {
+      list: () => registry.list(),
+      switch: (agent, expertId) => switcher.switch(agent, expertId),
+      stateOf: (sessionId) => switcher.stateOf(sessionId),
+      composeForCreation: (agent, expertId) => switcher.composeForCreation(agent, expertId),
+    })
   }, 'dsh-workbuddy-expert:service')
 
-  // Command: `/expert` (no argument) lists experts; isolated seam for the
-  // later contract-verification ticket.
+  // Command: `/expert` lists; `/expert <id>` soft-switches (ticket 03).
   ctx.effect(
-    () => registerExpertCommand(ctx, registry, roots.map((root) => root.path)),
+    () => registerExpertCommand(ctx, registry, switcher, roots.map((root) => root.path)),
     'dsh-workbuddy-expert:command',
   )
 }

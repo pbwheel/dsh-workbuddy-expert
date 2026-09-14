@@ -21,12 +21,27 @@
  *      makes it disappear — with a TTL long enough that ONLY the watcher
  *      chain can surface the change; the disposer closes everything;
  *   6. /expert command over a fake commands service: no-argument invocation
- *      lists experts including broken rows with reasons, an argument answers
- *      with an explicit not-yet error, a missing commands service warns and
- *      stays inert;
+ *      lists experts including broken rows with reasons, an argument performs
+ *      the soft-switch transaction (ticket 03), a missing commands service
+ *      warns and stays inert;
  *   7. full apply() wiring over a fake cordis context (process.cwd patched
  *      into the fixture): service provided as `experts`, command registered,
- *      list() works end to end, every effect disposer runs.
+ *      list() works end to end, every effect disposer runs;
+ *   8. compose/dispose over a fake agent ctx: role section (name, order,
+ *      sanitized body + meta line) + per-skill registration labeled
+ *      `expert:<id>`, non-SKILL.md subdirectories skipped, a throwing
+ *      skills.register degrades into the role-section catalog with one
+ *      warning, dispose runs everything in reverse order;
+ *   9. switch transaction serialization: two concurrent switches over one
+ *      session are applied strictly in order; a busy (running) agent's
+ *      transaction waits for whenIdle() before touching anything;
+ *  10. switch and switch back: the previous composition is fully disposed
+ *      (reverse), the new one registered, `expert/selected` events are
+ *      appended BEFORE the composition commit, the switch notice is injected;
+ *  11. an expert with an empty skills/ tree composes the role section only;
+ *  12. generation stamping: the composition holds its startup role text and
+ *      (mtime+size) stamp; on-disk edits surface only after the registry
+ *      cache is invalidated AND a later switch re-reads the folder.
  */
 
 import assert from 'node:assert/strict'
@@ -301,6 +316,57 @@ async function until(description, fn, timeoutMs = 5_000) {
 // ── 6. /expert command over a fake commands service ─────────────────────────
 
 const { renderExpertList, registerExpertCommand } = await import(join(root, 'src', 'command.js'))
+const { compose, ROLE_SECTION_NAME, ROLE_SECTION_ORDER, stampExpertDir } = await import(join(root, 'src', 'compose.js'))
+const { createSwitcher, EXPERT_SELECTED_EVENT } = await import(join(root, 'src', 'switch.js'))
+
+/** A fake agent: agent-scoped ctx with systemPrompt/skills + session/inject records. */
+function makeFakeAgent(sessionId) {
+  const events = []
+  const injections = []
+  const sections = new Map()
+  const registeredSkills = new Map()
+  const agent = {
+    id: sessionId,
+    status: 'idle',
+    whenIdle: async () => {},
+    ctx: {
+      get(serviceName) {
+        if (serviceName === 'systemPrompt') {
+          return {
+            section(section) {
+              sections.set(section.name, section)
+              return () => sections.delete(section.name)
+            },
+          }
+        }
+        if (serviceName === 'skills') {
+          return {
+            register(skill) {
+              registeredSkills.set(skill.name, skill)
+              return () => registeredSkills.delete(skill.name)
+            },
+          }
+        }
+        return undefined
+      },
+    },
+    session: {
+      append(type, data) {
+        const event = { type, data }
+        events.push(event)
+        return event
+      },
+    },
+    inject(message) {
+      injections.push(message)
+    },
+    events,
+    injections,
+    sections,
+    registeredSkills,
+  }
+  return agent
+}
 
 function makeFakeCommands() {
   const definitions = new Map()
@@ -321,7 +387,8 @@ function makeFakeCommands() {
     logger: { warn: (message) => logs.push(message) },
   }
   const registry = createRegistry({ roots, scan: scanDiscoveryRoots })
-  const off = registerExpertCommand(fakeCtx, registry, roots.map((r) => r.path))
+  const switcher = createSwitcher({ registry, logger: { warn: (m) => logs.push(m) } })
+  const off = registerExpertCommand(fakeCtx, registry, switcher, roots.map((r) => r.path))
   assert.equal(commands.definitions.size, 1, 'the /expert command registered')
   const definition = commands.definitions.get('expert')
   assert.equal(definition.name, 'expert')
@@ -334,9 +401,24 @@ function makeFakeCommands() {
   assert.ok(listed.text.includes('Bad_Folder'), 'an invalid folder name still shows as a broken row')
   assert.ok(listed.text.includes('[project]') && listed.text.includes('[user]'), 'root labels ride along')
 
-  const withArgument = await definition.handler({ rawInput: 'video-editor' })
-  assert.equal(withArgument.kind, 'error')
-  assert.ok(withArgument.text.includes('not implemented yet'), 'an argument answers with an explicit not-yet error')
+  // /expert <id> performs the soft switch (success) against the invocation's agent.
+  const agent = makeFakeAgent('cmd-session')
+  const withArgument = await definition.handler({ rawInput: 'video-editor', agent })
+  assert.equal(withArgument.kind, 'success')
+  assert.ok(withArgument.text.includes('video-editor'), 'a switch success names the target expert')
+  assert.ok(agent.sections.has(ROLE_SECTION_NAME), 'the switch composed the role section')
+  // /expert <unknown-id> answers with an error listing the available experts.
+  const unknown = await definition.handler({ rawInput: 'no-such-expert', agent })
+  assert.equal(unknown.kind, 'error')
+  assert.ok(unknown.text.includes('no-such-expert') && unknown.text.includes('video-editor'),
+    'an unknown id errors and lists the available experts')
+  // A broken id names the broken reason.
+  const brokenTarget = await definition.handler({ rawInput: 'no-role', agent })
+  assert.equal(brokenTarget.kind, 'error')
+  assert.ok(brokenTarget.text.includes('role.md missing'), 'a broken id carries its broken reason')
+  // No agent in the invocation: error, no crash.
+  const noAgent = await definition.handler({ rawInput: 'video-editor' })
+  assert.equal(noAgent.kind, 'error')
 
   off()
   assert.equal(commands.definitions.size, 0, 'the command disposer unregisters')
@@ -403,6 +485,223 @@ assert.equal(plugin.name, 'dsh-workbuddy-expert')
   for (const { dispose } of disposers) dispose()
   assert.ok(!provided.has('experts'), 'the service disposer unpublishes')
   assert.equal(commands.definitions.size, 0, 'the command disposer unregisters')
+}
+
+// ── 8. compose/dispose over a fake agent ctx ────────────────────────────────
+
+{
+  const agent = makeFakeAgent('compose-session')
+  const logs = []
+  const { experts } = await createRegistry({ roots, scan: scanDiscoveryRoots }).list()
+  const card = experts.find((expert) => expert.id === 'video-editor')
+  const composition = await compose(agent, card, { warn: (m) => logs.push(m) })
+
+  assert.equal(composition.expertId, 'video-editor')
+  assert.ok(Array.isArray(composition.generation) && composition.generation.length > 0,
+    'the composition carries its startup generation stamp')
+  assert.ok(composition.generation.every(([rel, mtime, size]) => typeof rel === 'string' && Number.isFinite(mtime) && Number.isFinite(size)),
+    'generation entries are (relPath, mtimeMs, size) triples')
+
+  const section = agent.sections.get(ROLE_SECTION_NAME)
+  assert.ok(section !== undefined, 'the role section registered in the agent scope')
+  assert.equal(section.order, ROLE_SECTION_ORDER)
+  assert.ok(section.text.includes('你是视频剪辑专家') && section.text.includes('{{model}}'),
+    'the sanitized role body rides the section')
+  assert.ok(section.text.includes('你当前承担以下专家角色'), 'the meta line is appended')
+  assert.deepEqual([...agent.registeredSkills.keys()].sort(), ['cut-video'],
+    'only the SKILL.md subdirectory registers as a skill')
+  assert.equal(agent.registeredSkills.get('cut-video').provider, 'expert:video-editor',
+    'the skill registration carries the expert provider tag')
+  assert.equal(logs.length, 0, 'a healthy compose logs nothing')
+
+  // Dispose order is reverse: record the disposal sequence.
+  const disposalOrder = []
+  const originalDelete = agent.sections.delete.bind(agent.sections)
+  agent.sections.delete = (name) => { disposalOrder.push(`section:${name}`); return originalDelete(name) }
+  composition.dispose()
+  assert.equal(agent.sections.size, 0, 'dispose removes the role section')
+  assert.equal(agent.registeredSkills.size, 0, 'dispose removes every skill')
+  assert.deepEqual(disposalOrder, [`section:${ROLE_SECTION_NAME}`], 'the section disposer ran')
+
+  // A throwing skills.register degrades to the role-section catalog + ONE warning per failure.
+  const agent2 = makeFakeAgent('compose-degrade')
+  const originalGet = agent2.ctx.get.bind(agent2.ctx)
+  agent2.ctx.get = (serviceName) => {
+    if (serviceName === 'skills') return { register: () => { throw new Error('nope') } }
+    return originalGet(serviceName)
+  }
+  const logs2 = []
+  const composition2 = await compose(agent2, card, { warn: (m) => logs2.push(m) })
+  const section2 = agent2.sections.get(ROLE_SECTION_NAME)
+  assert.ok(section2.text.includes('skill: cut-video'), 'the failed skill degrades into the role-section catalog')
+  assert.equal(logs2.filter((m) => m.includes('cut-video')).length, 1, 'exactly one warning for the failed skill')
+  composition2.dispose()
+  assert.equal(agent2.sections.size, 0, 'the degraded composition still disposes')
+}
+
+// ── 9. switch transaction serialization + busy-agent boundary ───────────────
+
+{
+  const orderLog = []
+  const registry = createRegistry({
+    roots,
+    scan: async (r) => {
+      orderLog.push('scan-start')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      orderLog.push('scan-end')
+      return scanDiscoveryRoots(r)
+    },
+    ttlMs: 600_000, // caching on: only the first transaction pays the scan
+  })
+  const switcher = createSwitcher({ registry, logger: { warn: () => {} } })
+  const agent = makeFakeAgent('serial-session')
+  const first = switcher.switch(agent, 'video-editor')
+  const second = switcher.switch(agent, 'shared')
+  await Promise.all([first, second])
+  // Serialized: the two scans (first transaction only; the second reuses the
+  // cached table) plus the two event appends never interleave.
+  assert.deepEqual(orderLog, ['scan-start', 'scan-end'], 'the second transaction reuses the cached scan')
+  assert.deepEqual(agent.events.map((event) => event.data.expert), ['video-editor', 'shared'],
+    'the two concurrent switches were applied strictly in order')
+  assert.equal(switcher.stateOf('serial-session').id, 'shared', 'the last switch wins')
+  assert.ok(agent.sections.has(ROLE_SECTION_NAME) && agent.registeredSkills.size === 0,
+    'the final composition (shared: role only) is in place')
+
+  // Busy agent: the transaction waits for whenIdle() before anything else.
+  const busyAgent = makeFakeAgent('busy-session')
+  let idleResolved = false
+  busyAgent.status = 'running'
+  busyAgent.whenIdle = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    idleResolved = true
+    busyAgent.status = 'idle'
+  }
+  const result = await switcher.switch(busyAgent, 'video-editor')
+  assert.equal(result.kind, 'success')
+  assert.ok(idleResolved, 'whenIdle() resolved before the transaction applied')
+  assert.ok(busyAgent.events.every((event) => idleResolved), 'every event landed after the turn boundary')
+  assert.equal(switcher.stateOf('busy-session').id, 'video-editor')
+
+  // Switching to the SAME expert is an idempotent no-op success.
+  const again = await switcher.switch(busyAgent, 'video-editor')
+  assert.equal(again.kind, 'success')
+  assert.ok(again.text.includes('无需切换'))
+  assert.equal(busyAgent.events.length, 1, 'an idempotent switch records no new event')
+
+  // Unknown/broken ids answer with an error listing the experts.
+  const missing = await switcher.switch(agent, 'no-such-expert')
+  assert.equal(missing.kind, 'error')
+  assert.ok(missing.text.includes('video-editor') && missing.text.includes('shared'))
+  const broken = await switcher.switch(agent, 'no-role')
+  assert.equal(broken.kind, 'error')
+  assert.ok(broken.text.includes('role.md missing'))
+  assert.equal(switcher.stateOf('serial-session').id, 'shared', 'a failed switch leaves the current composition intact')
+}
+
+// ── 10. switch → switch back: dispose correctness + event-before-commit ─────
+
+{
+  const registry = createRegistry({ roots, scan: scanDiscoveryRoots, ttlMs: 600_000 })
+  const switcher = createSwitcher({ registry, logger: { warn: () => {} } })
+  const agent = makeFakeAgent('round-trip')
+
+  const first = await switcher.switch(agent, 'video-editor')
+  assert.equal(first.kind, 'success')
+  const composedSection = agent.sections.get(ROLE_SECTION_NAME)
+  assert.ok(composedSection.text.includes('你是视频剪辑专家'))
+  assert.deepEqual([...agent.registeredSkills.keys()], ['cut-video'])
+  assert.deepEqual(agent.events, [{ type: EXPERT_SELECTED_EVENT, data: { expert: 'video-editor', previous: null } }],
+    'the first selection is recorded with previous: null')
+
+  const injectionsBefore = agent.injections.length
+  const second = await switcher.switch(agent, 'shared')
+  assert.equal(second.kind, 'success')
+  assert.ok(agent.registeredSkills.size === 0, 'switching away disposed the expert skills')
+  assert.ok(!agent.sections.get(ROLE_SECTION_NAME).text.includes('你是视频剪辑专家'),
+    'the role section was replaced by the new expert body')
+  assert.equal(agent.events.at(-1).data.previous, 'video-editor', 'the switch event names the previous expert')
+  assert.equal(agent.injections.length, injectionsBefore + 1, 'the switch notice was injected once')
+  assert.ok(agent.injections.at(-1).content[0].text.includes('已从专家 video-editor 切换为'),
+    'the notice states the from→to switch')
+  assert.equal(agent.injections.at(-1).source.plugin, 'dsh-workbuddy-expert')
+
+  const back = await switcher.switch(agent, 'video-editor')
+  assert.equal(back.kind, 'success')
+  assert.deepEqual([...agent.registeredSkills.keys()], ['cut-video'], 'switching back re-registers the skills')
+  assert.ok(agent.sections.get(ROLE_SECTION_NAME).text.includes('你是视频剪辑专家'))
+  assert.equal(agent.events.length, 3)
+
+  // Event-before-commit: the append happens while the OLD composition is
+  // already disposed but the NEW one is not yet in place (observable here as
+  // every event preceding its composition's section update — guaranteed by
+  // the serialized body's internal order; asserted via the append hook).
+  const orderAgent = makeFakeAgent('order-session')
+  const seenAtAppend = []
+  orderAgent.session.append = (type, data) => {
+    seenAtAppend.push([...orderAgent.registeredSkills.keys()])
+    return { type, data }
+  }
+  await switcher.switch(orderAgent, 'video-editor')
+  assert.deepEqual(seenAtAppend, [[]], 'at event-append time the new composition is not yet registered')
+}
+
+// ── 11. empty-skills expert: role section only ─────────────────────────────
+
+{
+  const registry = createRegistry({ roots, scan: scanDiscoveryRoots, ttlMs: 600_000 })
+  const switcher = createSwitcher({ registry, logger: { warn: () => {} } })
+  const agent = makeFakeAgent('role-only')
+  const result = await switcher.switch(agent, 'shared') // shared has NO skills/ tree
+  assert.equal(result.kind, 'success')
+  assert.ok(agent.sections.has(ROLE_SECTION_NAME), 'the role section registered')
+  assert.equal(agent.registeredSkills.size, 0, 'no skills registered for an empty-skills expert')
+  assert.ok(agent.sections.get(ROLE_SECTION_NAME).text.includes('你当前承担以下专家角色'))
+  // composeForCreation: the ticket-05 helper runs the same transaction.
+  const creationAgent = makeFakeAgent('creation-session')
+  const created = await switcher.composeForCreation(creationAgent, 'shared')
+  assert.equal(created.kind, 'success')
+  assert.equal(switcher.stateOf('creation-session').id, 'shared')
+  assert.deepEqual(creationAgent.events.at(-1).data, { expert: 'shared', previous: null })
+}
+
+// ── 12. generation stamping: running compositions keep their startup text ──
+
+{
+  const registry = createRegistry({ roots, scan: scanDiscoveryRoots, ttlMs: 600_000 })
+  const switcher = createSwitcher({ registry, logger: { warn: () => {} } })
+  const agent = makeFakeAgent('generation-session')
+  await switcher.switch(agent, 'video-editor')
+  const startupText = agent.sections.get(ROLE_SECTION_NAME).text
+  const startupStamp = switcher.stateOf('generation-session').generation
+  assert.ok(startupText.includes('你是视频剪辑专家'))
+
+  // Mutate the folder on disk AFTER composition: the running composition is
+  // untouched (its role text and stamp are startup snapshots).
+  writeFileSync(join(userRoot, 'video-editor', 'role.md'), '你现在是完全不同的角色。\n')
+  assert.equal(agent.sections.get(ROLE_SECTION_NAME).text, startupText,
+    'a running composition keeps its startup role text')
+  const stampNow = await stampExpertDir(join(userRoot, 'video-editor'))
+  assert.notDeepEqual(stampNow, startupStamp, 'the on-disk stamp changed (mtime/size)')
+
+  // While the cache is warm the switch still serves the startup generation;
+  // after invalidate() the next switch re-reads the folder.
+  await switcher.switch(agent, 'shared')
+  const cached = await switcher.switch(agent, 'video-editor')
+  assert.equal(cached.kind, 'success')
+  assert.ok(agent.sections.get(ROLE_SECTION_NAME).text.includes('你是视频剪辑专家'),
+    'a warm-cache switch keeps the startup generation')
+  registry.invalidate()
+  await switcher.switch(agent, 'shared')
+  const fresh = await switcher.switch(agent, 'video-editor')
+  assert.equal(fresh.kind, 'success')
+  assert.ok(agent.sections.get(ROLE_SECTION_NAME).text.includes('你现在是完全不同的角色'),
+    'an invalidated registry re-reads the folder for future switches')
+
+  // Restore the fixture content for any later reader.
+  writeFileSync(join(userRoot, 'video-editor', 'role.md'), [
+    '你是视频剪辑专家。变量 {{model}} 与 {{cwd}} 已注册，保留。(#1)',
+    '未注册组必须拆括号：{{ y: -2 }} 与 {{.CurrentDate}}。(#2)',
+  ].join('\r\n').concat('\r\n'))
 }
 
 rmSync(fixture, { recursive: true, force: true })

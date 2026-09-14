@@ -1,14 +1,16 @@
 /**
- * The `/expert` command, listing half (ticket 02): `/expert` with NO argument
- * renders the discovered expert table — valid cards plus broken rows with
- * their reasons. `/expert <name>` switching is a later ticket; until then an
- * argument answers with an explicit not-yet error that still shows the list.
+ * The `/expert` command (ticket 02 listing + ticket 03 switching).
  *
- * Registration is isolated in `registerExpertCommand` so the (unverified at
- * authoring time) `commands` service contract can be adjusted in one place:
- * resolve it defensively via `ctx.get('commands')`, register only when the
- * service and its `register` method are present, and otherwise warn ONCE and
- * stay inert — never a hard failure, never an HTTP fallback.
+ *   /expert          → the discovered expert table (valid + broken rows)
+ *   /expert <id>     → the serialized soft-switch transaction (src/switch.js)
+ *
+ * Registration uses the VERIFIED `commands` contract (design §11 #4):
+ *   ctx.commands.register({ name, description, input?, recordInput?,
+ *     handler(invocation: { commandId, agent, rawInput, attachments, signal })
+ *       → { kind: 'success' | 'error', text } | Promise<…> }) → disposer
+ *
+ * The seam stays defensive: when `ctx.get('commands')` is absent the command
+ * warns ONCE and stays inert (the plugin waits; never a hard failure).
  */
 
 export const COMMAND_NAME = 'expert'
@@ -54,14 +56,16 @@ export function renderExpertList(result, rootPaths = []) {
 
 /**
  * Register the `/expert` command against the `commands` service when it is
- * available. Defensive on purpose: the exact contract is verified by a later
- * ticket, so this function is the single seam to adjust.
+ * available (the single contract seam).
  * @param {object} ctx - cordis context
  * @param {{list: () => Promise<{experts: object[], warnings: string[]}>}} registry
+ * @param {{
+ *   switch: (agent: object, nextId: string) => Promise<{kind: string, text: string}>,
+ * }} switcher
  * @param {string[]} [rootPaths] - discovery roots for the empty-state hint
  * @returns {() => void} disposer unregistering the command (no-op when absent)
  */
-export function registerExpertCommand(ctx, registry, rootPaths = []) {
+export function registerExpertCommand(ctx, registry, switcher, rootPaths = []) {
   const commands = typeof ctx.get === 'function' ? ctx.get('commands') : undefined
   if (commands === undefined || typeof commands.register !== 'function') {
     ctx.logger?.warn?.(
@@ -72,18 +76,19 @@ export function registerExpertCommand(ctx, registry, rootPaths = []) {
   }
   return commands.register({
     name: COMMAND_NAME,
-    description: 'List discovered experts (no argument); /expert <id> switching arrives in a later ticket.',
+    description: 'List discovered experts; /expert <id> soft-switches this session\'s expert role and skills.',
     handler: async (invocation) => {
       const argument = typeof invocation?.rawInput === 'string' ? invocation.rawInput.trim() : ''
       const result = await registry.list()
       const text = renderExpertList(result, rootPaths)
-      if (argument !== '') {
-        return {
-          kind: 'error',
-          text: `/expert ${argument}: switching experts is not implemented yet (a later ticket). Current experts:\n${text}`,
-        }
+      if (argument === '') {
+        return { kind: 'success', text }
       }
-      return { kind: 'success', text }
+      const agent = invocation?.agent
+      if (agent === undefined || agent === null) {
+        return { kind: 'error', text: `/expert ${argument}: 当前命令缺少 agent 上下文，无法切换。当前专家：\n${text}` }
+      }
+      return switcher.switch(agent, argument)
     },
   })
 }
