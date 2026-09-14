@@ -16,6 +16,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { registerExpertCommand } from './command.js'
+import { mountImporter } from './importer/index.js'
 import { buildDiscoveryRoots, createRegistry } from './registry.js'
 import { createSwitcher } from './switch.js'
 import { watchRoots } from './watch.js'
@@ -90,4 +91,25 @@ export function apply(ctx, config = {}) {
     () => registerExpertCommand(ctx, registry, switcher, roots.map((root) => root.path)),
     'dsh-workbuddy-expert:command',
   )
+
+  // Importer segment (ticket 06): WorkBuddy source settings + read-only API.
+  // Optional and asynchronous (schemastery resolution): a missing
+  // webServer/settings leaves the registry/switch core fully usable, so the
+  // failure is a warning, not a fiber crash.
+  ctx.effect(() => {
+    let disposed = false
+    let offImporter
+    mountImporter(ctx)
+      .then((off) => {
+        if (disposed) off()
+        else offImporter = off
+      })
+      .catch((error) => {
+        warn(`importer segment not mounted: ${error instanceof Error ? error.message : String(error)}`)
+      })
+    return () => {
+      disposed = true
+      offImporter?.()
+    }
+  }, 'dsh-workbuddy-expert:importer')
 }
