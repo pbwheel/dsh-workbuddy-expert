@@ -34,6 +34,23 @@
  *   POST /dsh-workbuddy-expert/api/refresh → drop the scan cache, answer
  *                                       with a freshly scanned state.
  *
+ * Ticket 07 (present only when an export engine is injected — the
+ * read-only surface above stays mountable alone):
+ *   POST /dsh-workbuddy-expert/api/install {id}   → export the scanned
+ *                                       card into the user experts root
+ *                                       (404 unknown id, 409 existing
+ *                                       folder without a valid manifest,
+ *                                       409 corrupt manifest);
+ *   POST /dsh-workbuddy-expert/api/update {id}    → in-place re-export
+ *                                       when the source fingerprint
+ *                                       moved (changed:false otherwise);
+ *   POST /dsh-workbuddy-expert/api/uninstall {id} → delete the exported
+ *                                       folder (refused on folders this
+ *                                       importer never exported);
+ *   GET  /api/state additionally carries the installed overlay:
+ *                                       installed/updatable cards,
+ *                                       broken exports, orphans.
+ *
  * Security baseline (ported from wb-market): mutating routes accept
  * same-origin POSTs only (405/403 otherwise), JSON bodies are capped at
  * 4 KiB, every JSON response carries no-store, and one mutating operation
@@ -129,24 +146,40 @@ function stateCardOf(expert) {
  * existence flag, the settings revision for conflict protection, the
  * expert table (cards via `stateCardOf`), and warnings (scan + path
  * together; a nonexistent path adds its own warning while the scan still
- * answers an empty table).
- * @param {object} deps - { settingsService, catalog }
+ * answers an empty table). With an export engine injected (ticket 07)
+ * the payload additionally carries the installed overlay — top-level
+ * installed/broken/orphans lists plus per-card installed/updatable
+ * flags — mirroring wb-market's /api/state shape.
+ * @param {object} deps - { settingsService, catalog, exporter? }
  * @returns {Promise<object>} the state payload
  */
-async function buildState({ settingsService, catalog }) {
+async function buildState({ settingsService, catalog, exporter }) {
   const descriptor = namespaceDescriptor(settingsService)
   const rawSourcePath = descriptor.value.sourcePath
   const exists = await pathExists(rawSourcePath)
   const scan = await catalog.stateOf(rawSourcePath)
   const warnings = [...scan.warnings]
   if (!exists) warnings.push(`source path does not exist: ${rawSourcePath}`)
-  return {
+  const experts = scan.experts.map((expert) => stateCardOf(expert))
+  const state = {
     sourcePath: rawSourcePath,
     pathExists: exists,
     revision: descriptor.revision,
-    experts: scan.experts.map((expert) => stateCardOf(expert)),
+    experts,
     warnings,
   }
+  if (exporter !== undefined) {
+    const overlay = await exporter.overlay()
+    const installedById = new Map(overlay.installed.map((entry) => [entry.id, entry]))
+    state.experts = experts.map((expert) => {
+      const entry = installedById.get(expert.id)
+      return entry === undefined ? { ...expert, installed: false } : { ...expert, installed: true, updatable: entry.updatable }
+    })
+    state.installed = overlay.installed
+    state.broken = overlay.broken
+    state.orphans = overlay.orphans
+  }
+  return state
 }
 
 /** The RAW stored source path every scan-facing caller reads (tilde intact). */
@@ -166,19 +199,24 @@ function requireSourcePath(body) {
 
 /**
  * Register every importer route on the host webServer. Returns a disposer
- * that drops them all, so the plugin unloads cleanly.
+ * that drops them all, so the plugin unloads cleanly. Without an
+ * `exporter` the surface stays read-only (ticket 06 shape); with one,
+ * the install/update/uninstall POST routes join the SAME single-flight
+ * lane — the three operations are mutually exclusive with each other
+ * and with config/refresh.
  * @param {object} hostCtx - injected context exposing `webServer` + `settings`
  * @param {{ invalidate(): void, stateOf(raw: string): Promise<object> }} deps - { catalog } the shared scan cache
+ * @param {object} [deps.exporter] - the ticket-07 export engine (optional)
  */
-export function mountImporterRoutes(hostCtx, { catalog }) {
+export function mountImporterRoutes(hostCtx, { catalog, exporter }) {
   const disposers = []
   const register = (route) => {
     const off = hostCtx.webServer.register(route)
     if (typeof off === 'function') disposers.push(off)
   }
 
-  /** What buildState reads: settings + the shared scan cache. */
-  const deps = { settingsService: hostCtx.settings, catalog }
+  /** What buildState reads: settings + the shared scan cache (+ engine). */
+  const deps = { settingsService: hostCtx.settings, catalog, exporter }
 
   /** The RAW stored source path (tilde intact) every scan-facing caller reads. */
   const rawSourcePathOf = () => currentSourcePath(hostCtx.settings)
@@ -342,6 +380,55 @@ export function mountImporterRoutes(hostCtx, { catalog }) {
       }
     },
   })
+
+  // ── ticket 07: install/update/uninstall as expert-folder export ──────────
+
+  if (exporter !== undefined) {
+    /** Engine error codes → HTTP statuses (single-flight 409 stays exclusive to the lane). */
+    const statusOf = (code) => ({
+      CARD_NOT_FOUND: 404,
+      FOLDER_EXISTS: 409,
+      MANIFEST_BROKEN: 409,
+      NOT_EXPORTED: 409,
+      NOT_INSTALLED: 400,
+      CARD_INVALID: 400,
+    })[code] ?? 400
+
+    /** Validate the `{ id }` body of one engine route. */
+    const requireId = (body) => {
+      if (body === null || typeof body !== 'object') throw new Error('body must be a JSON object')
+      const id = body.id
+      if (typeof id !== 'string' || id.trim() === '') throw new Error('missing id')
+      return id
+    }
+
+    /** Register one engine POST route around a bound engine method. */
+    const registerEngineRoute = (name, run) => {
+      register({
+        kind: 'exact',
+        path: `${ROUTE_BASE}/api/${name}`,
+        handler: async (request, response) => {
+          if (!mutationGuard(request, response)) return
+          try {
+            const id = requireId(await readJsonBody(request))
+            const result = await run(id)
+            sendJson(response, 200, { ...result, state: await buildState(deps) })
+          } catch (error) {
+            sendJson(response, error?.code !== undefined ? statusOf(error.code) : 400, {
+              error: errorMessage(error),
+              ...(error?.code !== undefined ? { code: error.code } : {}),
+            })
+          } finally {
+            mutating = false
+          }
+        },
+      })
+    }
+
+    registerEngineRoute('install', (id) => exporter.install(id))
+    registerEngineRoute('update', (id) => exporter.update(id))
+    registerEngineRoute('uninstall', (id) => exporter.uninstall(id))
+  }
 
   return () => {
     for (const off of disposers) off()
