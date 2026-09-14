@@ -489,6 +489,18 @@ assert.equal(plugin.name, 'dsh-workbuddy-expert')
       disposers.push({ label, dispose: typeof dispose === 'function' ? dispose : () => {} })
       return disposers[disposers.length - 1].dispose
     },
+    // Minimal staged-inject emulation: the callback fires only when every
+    // named service is present on the fake ctx (none are in this fixture —
+    // matching the real host's waiting behavior for absent services).
+    inject(names, callback) {
+      const scopeCtx = {}
+      for (const dep of names) {
+        if (this[dep] === undefined) return () => {}
+        scopeCtx[dep] = this[dep]
+      }
+      callback(scopeCtx)
+      return () => {}
+    },
   }
 
   const originalCwd = process.cwd
