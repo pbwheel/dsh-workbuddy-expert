@@ -15,12 +15,15 @@
  *     (dsh-skill runtime path: requires { name, description, content?, … };
  *     `provider` labels the contribution — we use `expert:<id>`).
  *
- * tools.restrict is deliberately NOT registered here (ticket 10 / P3).
+ * tools.restrict (ticket 10, design §4 step c): an expert declaring
+ * tools.allow mounts a scoped restriction inside the same dispose group —
+ * registered last so the reverse dispose lifts it FIRST on switch-away.
  */
 
 import { readdir, stat } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 
+import { mountToolsAllowlist } from './restrict.js'
 import { mountScriptGuard, trustParagraph } from './trust.js'
 
 /** System prompt section name owned by this plugin (one per agent scope). */
@@ -209,9 +212,14 @@ export async function compose(agent, expertCard, logger = {}) {
   // degrades to this paragraph with one warning (see mountScriptGuard).
   const guardDisposer = mountScriptGuard(agentCtx, expertCard, logger)
 
-  const text = fallbackCatalog === ''
-    ? roleSectionTextWithTrust(expertCard)
-    : `${roleSectionTextWithTrust(expertCard)}\n\n${fallbackCatalog}`
+  // Step c (design §4): tools.allow whitelist via the scoped tools.restrict
+  // contract (verified in the harness dsh-tools source). The degraded path
+  // returns a prompt-only paragraph that rides the role section below.
+  const restriction = mountToolsAllowlist(agentCtx, expertCard.toolsAllow, logger, expertCard.id)
+
+  const text = [roleSectionTextWithTrust(expertCard), fallbackCatalog, restriction.paragraph]
+    .filter((part) => part !== '')
+    .join('\n\n')
 
   const disposers = []
   if (systemPrompt !== undefined && typeof systemPrompt.section === 'function') {
@@ -226,9 +234,10 @@ export async function compose(agent, expertCard, logger = {}) {
     expertId: expertCard.id,
     generation,
     dispose() {
-      // Reverse order (design §4): role section last-registered → first out,
-      // then skills in reverse registration order.
-      for (const dispose of [...disposers, ...skillDisposers, guardDisposer].reverse()) {
+      // Reverse order (design §4): the restrict disposer was registered last
+      // → lifted FIRST on switch-away, then the role section, then skills in
+      // reverse registration order.
+      for (const dispose of [...disposers, ...skillDisposers, guardDisposer, restriction.dispose].reverse()) {
         try {
           dispose()
         } catch (error) {

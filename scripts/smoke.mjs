@@ -51,6 +51,13 @@
  *      own scripts/ references; mountScriptGuard denies a referencing bash
  *      call, passes unrelated calls through, unmounts, and degrades with
  *      one warning when guard registration throws.
+ *  14. tools.allow whitelist (ticket 10): expert.yml parsing (block list,
+ *      inline flow list, declared-empty, missing allow, invalid scalar /
+ *      scalar tools / empty item → broken rows), compose mounts the scoped
+ *      tools.restrict({ allow }) with the restrict disposer disposed FIRST
+ *      on switch-away, an empty allow never calls restrict, a throwing
+ *      restrict degrades to ONE warning + a prompt paragraph naming the
+ *      allowlist, and a real switch away lifts the restriction.
  */
 
 import assert from 'node:assert/strict'
@@ -328,8 +335,8 @@ const { renderExpertList, registerExpertCommand } = await import(join(root, 'src
 const { compose, ROLE_SECTION_NAME, ROLE_SECTION_ORDER, stampExpertDir } = await import(join(root, 'src', 'compose.js'))
 const { createSwitcher, EXPERT_SELECTED_EVENT } = await import(join(root, 'src', 'switch.js'))
 
-/** A fake agent: agent-scoped ctx with systemPrompt/skills + session/inject records. */
-function makeFakeAgent(sessionId) {
+/** A fake agent: agent-scoped ctx with systemPrompt/skills (+ optional tools) + session/inject records. */
+function makeFakeAgent(sessionId, toolsService) {
   const events = []
   const injections = []
   const sections = new Map()
@@ -340,6 +347,9 @@ function makeFakeAgent(sessionId) {
     whenIdle: async () => {},
     ctx: {
       get(serviceName) {
+        if (serviceName === 'tools' && toolsService !== undefined) {
+          return toolsService
+        }
         if (serviceName === 'systemPrompt') {
           return {
             section(section) {
@@ -852,6 +862,146 @@ const { SCRIPT_GUARD_PARAGRAPH, SCRIPT_TRUST_NOTICE_PARAGRAPH, commandTargetsExp
     assert.equal(mounted.length, 1, 'compose mounted the hard guard for the untrusted expert')
     composition3.dispose()
     assert.equal(mounted.length, 0, 'composition dispose unmounts the hard guard')
+  }
+}
+
+// ── 14. tools.allow whitelist (ticket 10) ──────────────────────────────────
+
+const { mountToolsAllowlist, toolsAllowlistParagraph } = await import(join(root, 'src', 'restrict.js'))
+const { parseToolsAllow } = registryModule
+
+// Parser-level checks (pure text, no fixture needed).
+{
+  const block = parseToolsAllow('id: x\ntools:\n  allow:\n    - read\n    - "grep"\n    - bash\n')
+  assert.deepEqual(block, { allow: ['read', 'grep', 'bash'], broken: undefined }, 'block list parses with quotes')
+  const flowChild = parseToolsAllow('id: x\ntools:\n  allow: [read, bash]\n')
+  assert.deepEqual(flowChild, { allow: ['read', 'bash'], broken: undefined }, 'inline flow child list parses')
+  const flowMap = parseToolsAllow('id: x\ntools: { allow: [read] }\n')
+  assert.deepEqual(flowMap, { allow: ['read'], broken: undefined }, 'flow mapping form parses')
+  const empty = parseToolsAllow('id: x\ntools:\n  allow: []\n')
+  assert.deepEqual(empty, { allow: [], broken: undefined }, 'declared empty parses as [] (= 不限制)')
+  assert.deepEqual(parseToolsAllow('id: x\n'), { allow: undefined, broken: undefined }, 'no tools key → undefined')
+  assert.deepEqual(parseToolsAllow('id: x\ntools:\n  deny: [bash]\n'),
+    { allow: undefined, broken: undefined }, 'tools without allow → no restriction declared')
+  assert.ok(parseToolsAllow('id: x\ntools:\n  allow: bash\n').broken.includes('tools.allow must be a list'),
+    'allow as a scalar is a broken reason')
+  assert.ok(parseToolsAllow('id: x\ntools: true\n').broken.includes('tools must be a mapping'),
+    'tools as a scalar is a broken reason')
+  assert.ok(parseToolsAllow('id: x\ntools:\n  allow:\n    - read\n    - \n').broken.includes('empty list item'),
+    'an empty list item is a broken reason')
+}
+
+// Fixture experts with tools declarations (scanned AFTER every earlier
+// section, so no earlier full-inventory assertion is affected).
+fixtureWrite(userRoot, 'tool-limited/expert.yml', [
+  'id: tool-limited',
+  'display_name: 白名单专家',
+  'tools:',
+  '  allow:',
+  '    - read',
+  '    - "grep"',
+  '    - bash',
+].join('\n'))
+fixtureWrite(userRoot, 'tool-limited/role.md', '你是白名单受限专家。\n')
+
+fixtureWrite(userRoot, 'tool-inline/expert.yml', 'id: tool-inline\ntools:\n  allow: [read, bash]\n')
+fixtureWrite(userRoot, 'tool-inline/role.md', 'body\n')
+
+fixtureWrite(userRoot, 'tool-empty/expert.yml', 'id: tool-empty\ntools:\n  allow: []\n')
+fixtureWrite(userRoot, 'tool-empty/role.md', 'body\n')
+
+fixtureWrite(userRoot, 'tool-bad/expert.yml', 'id: tool-bad\ntools:\n  allow: bash\n')
+fixtureWrite(userRoot, 'tool-bad/role.md', 'body\n')
+
+{
+  const fresh = await scanDiscoveryRoots(roots)
+  const cards = new Map(fresh.experts.map((expert) => [expert.id, expert]))
+  assert.deepEqual(cards.get('tool-limited').toolsAllow, ['read', 'grep', 'bash'],
+    'the card carries the parsed toolsAllow whitelist')
+  assert.equal(cards.get('tool-limited').broken, undefined)
+  assert.deepEqual(cards.get('tool-inline').toolsAllow, ['read', 'bash'], 'inline flow list lands on the card')
+  assert.deepEqual(cards.get('tool-empty').toolsAllow, [], 'declared empty → toolsAllow [] (no restriction)')
+  assert.deepEqual(cards.get('video-editor').toolsAllow, [], 'an undeclaring expert carries []')
+  assert.ok(cards.get('tool-bad').broken.includes('tools.allow must be a list'),
+    'an invalid tools.allow shape is a broken row, never silently ignored')
+  assert.equal(cards.get('tool-bad').root, 'user', 'the broken tools shape keeps its root label')
+
+  // Compose: restriction mounts on the scoped ctx with { allow }; the
+  // restrict disposer is disposed FIRST (reverse group) on dispose.
+  const mountedFilters = []
+  const disposalOrder = []
+  const toolsService = {
+    restrict(filter) {
+      mountedFilters.push(filter)
+      return () => { mountedFilters.pop(); disposalOrder.push('restrict') }
+    },
+  }
+  const limited = cards.get('tool-limited')
+  const agent = makeFakeAgent('restrict-session', toolsService)
+  const logs = []
+  const composition = await compose(agent, limited, { warn: (m) => logs.push(m) })
+  assert.deepEqual(mountedFilters, [{ allow: ['read', 'grep', 'bash'] }],
+    'restrict received exactly { allow: [...] } on the scoped context')
+  assert.equal(logs.length, 0, 'a confirmed restrict contract logs nothing')
+  const text = agent.sections.get(ROLE_SECTION_NAME).text
+  assert.ok(!text.includes('工具白名单'), 'no prompt-only paragraph when the hard restriction mounted')
+
+  const originalDelete = agent.sections.delete.bind(agent.sections)
+  agent.sections.delete = (name) => { disposalOrder.push(`section:${name}`); return originalDelete(name) }
+  composition.dispose()
+  assert.deepEqual(disposalOrder, ['restrict', `section:${ROLE_SECTION_NAME}`],
+    'dispose lifts the restriction FIRST, then the role section (reverse group)')
+  assert.equal(mountedFilters.length, 0, 'the restriction is fully lifted after dispose')
+
+  // Degrade: a throwing restrict → no crash, ONE warning naming the expert,
+  // and the prompt-only paragraph appended to the role section.
+  const throwingTools = { restrict: () => { throw new Error('names unknown global tool "nope"') } }
+  const degradeAgent = makeFakeAgent('restrict-degrade', throwingTools)
+  const degradeLogs = []
+  const degradeComposition = await compose(degradeAgent, limited, { warn: (m) => degradeLogs.push(m) })
+  assert.equal(degradeLogs.length, 1, 'exactly one warning on the degrade path')
+  assert.ok(degradeLogs[0].includes('tool-limited') && degradeLogs[0].includes('restrict'),
+    'the warning names the expert and the unsupported contract')
+  const degradeText = degradeAgent.sections.get(ROLE_SECTION_NAME).text
+  assert.ok(degradeText.includes(toolsAllowlistParagraph(['read', 'grep', 'bash'])),
+    'the degraded role section carries the prompt-only allowlist paragraph')
+  degradeComposition.dispose()
+  assert.equal(degradeAgent.sections.size, 0, 'the degraded composition still disposes cleanly')
+
+  // No tools service at all: same one-warning degrade.
+  const absentAgent = makeFakeAgent('restrict-absent')
+  const absentLogs = []
+  const absentComposition = await compose(absentAgent, cards.get('tool-limited'), { warn: (m) => absentLogs.push(m) })
+  assert.equal(absentLogs.filter((m) => m.includes('tools.restrict')).length, 1,
+    'exactly one warning when the tools service is absent')
+  assert.ok(absentAgent.sections.get(ROLE_SECTION_NAME).text.includes('工具白名单'))
+  absentComposition.dispose()
+
+  // Empty allow: restrict is never called.
+  const emptyCalls = []
+  const emptyAgent = makeFakeAgent('restrict-empty', { restrict: (f) => { emptyCalls.push(f); return () => {} } })
+  const emptyComposition = await compose(emptyAgent, cards.get('tool-empty'), { warn: () => {} })
+  assert.equal(emptyCalls.length, 0, 'declared empty = 不限制: restrict is never called')
+  emptyComposition.dispose()
+
+  // Switch integration: switching away lifts the restriction; switching to a
+  // non-declaring expert mounts nothing new.
+  const switcher = createSwitcher({
+    registry: createRegistry({ roots, scan: scanDiscoveryRoots, ttlMs: 600_000 }),
+    logger: { warn: () => {} },
+  })
+  const switchAgent = makeFakeAgent('restrict-switch', toolsService)
+  assert.equal((await switcher.switch(switchAgent, 'tool-limited')).kind, 'success')
+  assert.deepEqual(mountedFilters, [{ allow: ['read', 'grep', 'bash'] }], 'the switch mounted the restriction')
+  assert.equal((await switcher.switch(switchAgent, 'shared')).kind, 'success')
+  assert.equal(mountedFilters.length, 0, 'switching away lifted the restriction with the composition')
+
+  // mountToolsAllowlist direct contract: empty/absent allow never probes ctx.
+  {
+    const result = mountToolsAllowlist({ get: () => { throw new Error('probed') } }, [], {}, 'x')
+    assert.equal(typeof result.dispose, 'function', 'an empty allow returns a callable no-op disposer')
+    assert.equal(result.paragraph, '', 'an empty allow contributes no paragraph')
+    result.dispose()
   }
 }
 

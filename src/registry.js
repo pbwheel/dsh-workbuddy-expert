@@ -81,6 +81,120 @@ export function parseExpertYml(rawText) {
   return { fields, malformed: undefined }
 }
 
+// ── tools.allow parsing (design §1, ticket 10) ──────────────────────────────
+
+/**
+ * Parse the `tools:` nested mapping for the `allow` list (design §1).
+ * Accepted shapes (the expert.yml subset this registry consumes):
+ *
+ *   tools:            tools:                 tools:
+ *     allow:            allow: [read, bash]     allow: []
+ *       - read
+ *       - bash
+ *
+ * A flow mapping `tools: { allow: [a] }` is also accepted. Anything else —
+ * `tools` as a scalar, `allow` as a scalar, an empty or non-string list
+ * item — is a broken reason, never silently ignored (design: invalid shapes
+ * → broken row). A `tools:` block without `allow` declares no restriction.
+ *
+ * @param {string} rawText - sanitized expert.yml text
+ * @returns {{ allow: string[] | undefined, broken: string | undefined }}
+ *   allow undefined → not declared; [] → declared empty = 不限制.
+ */
+export function parseToolsAllow(rawText) {
+  const lines = sanitizeText(rawText).split('\n')
+
+  // Locate the top-level `tools:` key.
+  let toolsIndex = -1
+  let toolsValue = ''
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.trim() === '' || line.trimStart().startsWith('#')) continue
+    if (/^\s/.test(line)) continue
+    const match = /^tools:[ \t]*(.*)$/.exec(line)
+    if (match === null) continue
+    toolsIndex = i
+    toolsValue = match[1].trim()
+    break
+  }
+  if (toolsIndex < 0) return { allow: undefined, broken: undefined }
+
+  // Inline forms: flow mapping, or an invalid scalar.
+  if (toolsValue !== '') {
+    if (toolsValue.startsWith('{')) {
+      const flow = /\ballow:[ \t]*\[([^\]]*)\]/.exec(toolsValue)
+      if (flow === null) return { allow: undefined, broken: undefined } // flow mapping without allow
+      const parsed = parseFlowList(flow[1])
+      if (parsed.broken !== undefined) return { allow: undefined, broken: `tools.allow ${parsed.broken}` }
+      return { allow: parsed.items, broken: undefined }
+    }
+    return { allow: undefined, broken: `tools must be a mapping (indented allow: list), got ${JSON.stringify(toolsValue)}` }
+  }
+
+  // Block form: indented children until the next top-level key.
+  const children = []
+  for (let i = toolsIndex + 1; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.trim() === '') continue
+    if (!/^\s/.test(line)) break
+    children.push(line)
+  }
+
+  const first = children.find((line) => !line.trimStart().startsWith('#'))
+  if (first === undefined) return { allow: undefined, broken: undefined } // empty block
+  const baseIndent = first.length - first.trimStart().length
+
+  let allowValue = null // null = no allow key found yet
+  let allowLine = -1
+  for (let i = 0; i < children.length; i++) {
+    const line = children[i]
+    const trimmed = line.trim()
+    if (trimmed === '' || trimmed.startsWith('#')) continue
+    const indent = line.length - line.trimStart().length
+    const match = /^allow:[ \t]*(.*)$/.exec(trimmed)
+    if (match !== null && indent === baseIndent) {
+      allowValue = match[1].trim()
+      allowLine = i
+      break
+    }
+  }
+  if (allowValue === null) return { allow: undefined, broken: undefined } // other tools.* keys only
+
+  if (allowValue !== '') {
+    if (!allowValue.startsWith('[')) {
+      return { allow: undefined, broken: `tools.allow must be a list, got ${JSON.stringify(allowValue)}` }
+    }
+    const parsed = parseFlowList(allowValue.slice(1, -1))
+    if (parsed.broken !== undefined) return { allow: undefined, broken: `tools.allow ${parsed.broken}` }
+    return { allow: parsed.items, broken: undefined }
+  }
+
+  // Block list: subsequent `- item` lines (same indent band as the block).
+  const items = []
+  for (let i = allowLine + 1; i < children.length; i++) {
+    const line = children[i]
+    const trimmed = line.trim()
+    if (trimmed === '') continue
+    const itemMatch = /^-(?:[ \t]+(.*))?$/.exec(trimmed)
+    if (itemMatch === null) break // first non-item line ends the list
+    const raw = (itemMatch[1] ?? '').trim()
+    if (raw === '') return { allow: undefined, broken: 'tools.allow has an empty list item' }
+    items.push(String(unquoteScalar(raw)))
+  }
+  return { allow: items, broken: undefined } // zero items = declared empty
+}
+
+/** Parse a flow list body (`a, b, "c d"`) into items or a broken reason. */
+function parseFlowList(body) {
+  const items = []
+  for (const part of body.split(',')) {
+    const raw = part.trim()
+    if (raw === '') continue
+    items.push(String(unquoteScalar(raw)))
+  }
+  return { items, broken: undefined }
+}
+
 // ── discovery roots ─────────────────────────────────────────────────────────
 
 /**
@@ -154,6 +268,7 @@ function brokenCard(dir, folderName, rootInfo, reason) {
     skills: [],
     trustScripts: false,
     scriptsAllowed: false,
+    toolsAllow: [],
   }
 }
 
@@ -179,6 +294,13 @@ export async function scanExpertFolder(dir, folderName, rootInfo) {
 
   const { fields, malformed } = parseExpertYml(manifestText)
   if (malformed !== undefined) return brokenCard(dir, folderName, rootInfo, `expert.yml invalid: ${malformed}`)
+
+  // tools.allow (design §1, ticket 10): invalid shapes are broken rows,
+  // never silently ignored; 空 = 不限制 (empty list → no restriction).
+  const toolsInfo = parseToolsAllow(manifestText)
+  if (toolsInfo.broken !== undefined) {
+    return brokenCard(dir, folderName, rootInfo, `expert.yml invalid: ${toolsInfo.broken}`)
+  }
 
   const id = typeof fields.id === 'string' ? fields.id.trim() : ''
   if (id === '') return brokenCard(dir, folderName, rootInfo, 'expert.yml has no id')
@@ -236,6 +358,9 @@ export async function scanExpertFolder(dir, folderName, rootInfo) {
     // Computed (ticket 04): user-rank roots always allow scripts/, project
     // rank only with an explicit trust_scripts declaration.
     scriptsAllowed: rootInfo.trust === 'user' || fields.trust_scripts === 'true',
+    // Declared tool whitelist (ticket 10): [] = 不限制; compose mounts the
+    // scoped tools.restrict only for a non-empty array.
+    toolsAllow: toolsInfo.allow ?? [],
     skills,
   }
 }
