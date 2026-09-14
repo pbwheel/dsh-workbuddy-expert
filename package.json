@@ -1,0 +1,31 @@
+{
+  "name": "dsh-workbuddy-expert",
+  "version": "0.1.0",
+  "description": "Expert folders for DeepSeek Harness — hand-written expert directories (role.md + skills) discovered under project and user roots, listed and switched via /expert. · DSH 专家文件夹：手写专家目录，/expert 列表与软切换。",
+  "type": "module",
+  "main": "src/index.js",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "experts",
+    "workbuddy"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

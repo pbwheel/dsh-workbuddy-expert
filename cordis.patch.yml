@@ -1,0 +1,8 @@
+# dsh bundle patch: inserts this plugin into a profile's layer stack.
+# Listed in a profile's package.json dsh.profile.bundles, this patch adds the
+# host half (registry + ctx.experts + /expert command). The client half
+# (switch selector UI) arrives in a later phase and is discovered separately
+# via dsh.client.
+- insert:
+    - id: dsh-workbuddy-expert
+      name: 'dsh-workbuddy-expert'
