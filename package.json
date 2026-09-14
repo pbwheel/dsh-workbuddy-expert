@@ -7,11 +7,13 @@
   "license": "MIT",
   "exports": {
     ".": "./src/index.js",
+    "./client": "./client/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
     "src",
+    "client",
     "scripts",
     "cordis.patch.yml",
     "README.md"
@@ -26,6 +28,14 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web"
     }
   }
 }

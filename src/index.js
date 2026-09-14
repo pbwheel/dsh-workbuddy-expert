@@ -18,6 +18,7 @@ import { join, resolve } from 'node:path'
 import { registerExpertCommand } from './command.js'
 import { mountImporter } from './importer/index.js'
 import { buildDiscoveryRoots, createRegistry } from './registry.js'
+import { mountSelectorRoutes } from './selector-routes.js'
 import { createSwitcher } from './switch.js'
 import { watchRoots } from './watch.js'
 
@@ -91,6 +92,36 @@ export function apply(ctx, config = {}) {
     () => registerExpertCommand(ctx, registry, switcher, roots.map((root) => root.path)),
     'dsh-workbuddy-expert:command',
   )
+
+  // Selector routes (ticket 05): GET /api/experts, POST /api/switch,
+  // POST /api/after-create — the client control's transport. Agent
+  // resolution stays a defensive seam: the live host's agent-by-sessionId
+  // lookup shape is not part of this plugin's verified contract, so the
+  // resolver tries the plausible service shapes and the routes degrade to
+  // a clean domain error when none resolves (never a fiber crash).
+  ctx.effect(() => {
+    const webServer = typeof ctx.get === 'function' ? ctx.get('webServer') : undefined
+    if (webServer === undefined || typeof webServer.register !== 'function') {
+      warn('webServer is unavailable — the selector routes were not mounted')
+      return () => {}
+    }
+    const resolveAgent = (sessionId) => {
+      for (const serviceName of ['agents', 'sessions']) {
+        const service = typeof ctx.get === 'function' ? ctx.get(serviceName) : undefined
+        if (service === undefined || service === null) continue
+        for (const access of [
+          () => (typeof service.get === 'function' ? service.get(sessionId) : undefined),
+          () => (typeof service.byId === 'object' && service.byId !== null ? service.byId[sessionId] : undefined),
+          () => (typeof service.resolve === 'function' ? service.resolve(sessionId) : undefined),
+        ]) {
+          const agent = access()
+          if (agent !== undefined && agent !== null) return agent
+        }
+      }
+      return undefined
+    }
+    return mountSelectorRoutes({ webServer }, { registry, switcher, resolveAgent })
+  }, 'dsh-workbuddy-expert:selector-routes')
 
   // Importer segment (ticket 06): WorkBuddy source settings + read-only API.
   // Optional and asynchronous (schemastery resolution): a missing

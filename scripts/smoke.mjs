@@ -84,7 +84,9 @@ assert.equal(pkg.type, 'module', 'zero-build ESM, no runtime deps')
 assert.equal(pkg.main, 'src/index.js')
 assert.deepEqual(Object.keys(pkg.dependencies ?? {}), [], 'no runtime dependencies')
 assert.equal(pkg.dsh?.bundle?.patch, './cordis.patch.yml', 'bundle patch declared')
-assert.equal(pkg.dsh?.client, undefined, 'no client half in this phase (P1 adds one)')
+assert.ok(Array.isArray(pkg.dsh?.client?.inject) && pkg.dsh.client.inject.length > 0,
+  'client half declared since P1 (ticket 05): dsh.client.inject is a non-empty list')
+assert.equal(pkg.dsh.client.platform, 'web', 'client platform declared')
 for (const [specifier, target] of Object.entries(pkg.exports)) {
   assert.ok(readFileSync(join(root, target), 'utf8') !== undefined, `exports target exists: ${specifier} -> ${target}`)
 }
