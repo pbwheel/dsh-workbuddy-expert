@@ -57,7 +57,8 @@ assert.deepEqual(pkg.dsh.client.inject, [
   '@deepseek-ai/dsh-client-connection',
   '@deepseek-ai/dsh-client-locale',
   '@deepseek-ai/dsh-client-ui-conversation',
-], 'client inject composes connection + the locale service + the conversation slot owner')
+  '@deepseek-ai/dsh-client-ui-settings',
+], 'client inject composes connection + the locale service + the conversation slot owner + the settings slot owner')
 assert.equal(pkg.dsh.client.platform, 'web', 'client platform declared')
 for (const target of [pkg.exports['./client'], pkg.exports['./cordis.patch.yml']]) {
   assert.ok(readFileSync(join(root, target), 'utf8') !== undefined, `exports target exists: ${target}`)
