@@ -94,53 +94,60 @@ export function apply(ctx, config = {}) {
   )
 
   // Selector routes (ticket 05): GET /api/experts, POST /api/switch,
-  // POST /api/after-create — the client control's transport. Agent
-  // resolution stays a defensive seam: the live host's agent-by-sessionId
-  // lookup shape is not part of this plugin's verified contract, so the
-  // resolver tries the plausible service shapes and the routes degrade to
-  // a clean domain error when none resolves (never a fiber crash).
-  ctx.effect(() => {
-    const webServer = typeof ctx.get === 'function' ? ctx.get('webServer') : undefined
-    if (webServer === undefined || typeof webServer.register !== 'function') {
-      warn('webServer is unavailable — the selector routes were not mounted')
-      return () => {}
-    }
-    const resolveAgent = (sessionId) => {
-      for (const serviceName of ['agents', 'sessions']) {
-        const service = typeof ctx.get === 'function' ? ctx.get(serviceName) : undefined
-        if (service === undefined || service === null) continue
-        for (const access of [
-          () => (typeof service.get === 'function' ? service.get(sessionId) : undefined),
-          () => (typeof service.byId === 'object' && service.byId !== null ? service.byId[sessionId] : undefined),
-          () => (typeof service.resolve === 'function' ? service.resolve(sessionId) : undefined),
-        ]) {
-          const agent = access()
-          if (agent !== undefined && agent !== null) return agent
-        }
+  // POST /api/after-create — the client control's transport. Staged inject
+  // (sister-plugin pattern): the webServer may register after this plugin
+  // applies, and a synchronous ctx.get would silently skip the routes (the
+  // exact 404 seen in the first real-composition check). Agent resolution
+  // stays a defensive seam: the live host's agent-by-sessionId lookup shape
+  // is not part of this plugin's verified contract, so the resolver tries
+  // the plausible service shapes and the routes degrade to a clean domain
+  // error when none resolves (never a fiber crash).
+  ctx.inject(['webServer'], (webServerCtx) => {
+    ctx.effect(() => {
+      const webServer = webServerCtx.webServer
+      if (typeof webServer?.register !== 'function') {
+        warn('webServer is unavailable — the selector routes were not mounted')
+        return () => {}
       }
-      return undefined
-    }
-    return mountSelectorRoutes({ webServer }, { registry, switcher, resolveAgent })
-  }, 'dsh-workbuddy-expert:selector-routes')
+      const resolveAgent = (sessionId) => {
+        for (const serviceName of ['agents', 'sessions']) {
+          const service = typeof ctx.get === 'function' ? ctx.get(serviceName) : undefined
+          if (service === undefined || service === null) continue
+          for (const access of [
+            () => (typeof service.get === 'function' ? service.get(sessionId) : undefined),
+            () => (typeof service.byId === 'object' && service.byId !== null ? service.byId[sessionId] : undefined),
+            () => (typeof service.resolve === 'function' ? service.resolve(sessionId) : undefined),
+          ]) {
+            const agent = access()
+            if (agent !== undefined && agent !== null) return agent
+          }
+        }
+        return undefined
+      }
+      return mountSelectorRoutes({ webServer }, { registry, switcher, resolveAgent })
+    }, 'dsh-workbuddy-expert:selector-routes')
+  })
 
   // Importer segment (ticket 06): WorkBuddy source settings + read-only API.
-  // Optional and asynchronous (schemastery resolution): a missing
-  // webServer/settings leaves the registry/switch core fully usable, so the
-  // failure is a warning, not a fiber crash.
-  ctx.effect(() => {
-    let disposed = false
-    let offImporter
-    mountImporter(ctx)
-      .then((off) => {
-        if (disposed) off()
-        else offImporter = off
-      })
-      .catch((error) => {
-        warn(`importer segment not mounted: ${error instanceof Error ? error.message : String(error)}`)
-      })
-    return () => {
-      disposed = true
-      offImporter?.()
-    }
-  }, 'dsh-workbuddy-expert:importer')
+  // Staged inject on BOTH services (mountImporter throws when either is
+  // missing): a profile without them leaves the registry/switch core fully
+  // usable, and the segment mounts the moment both services are live.
+  ctx.inject(['webServer', 'settings'], (importerCtx) => {
+    ctx.effect(() => {
+      let disposed = false
+      let offImporter
+      mountImporter(importerCtx)
+        .then((off) => {
+          if (disposed) off()
+          else offImporter = off
+        })
+        .catch((error) => {
+          warn(`importer segment not mounted: ${error instanceof Error ? error.message : String(error)}`)
+        })
+      return () => {
+        disposed = true
+        offImporter?.()
+      }
+    }, 'dsh-workbuddy-expert:importer')
+  })
 }
