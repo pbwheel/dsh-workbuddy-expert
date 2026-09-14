@@ -188,7 +188,7 @@ compose(session, expert)：
 | role.md 含未注册 `{{…}}` 组 / CRLF | registry/importer 清洗（§1），清洗失败 broken 不静默 |
 | project rank 专家引用未信任脚本 | 执行层拒绝 + 提示（§5.d） |
 | 与 preset 的叠加 | 会话以任意 preset 开场后 `/expert` 均可切换；role section 与 preset persona 可能共存，切换时提示一句"原 preset 角色描述仍在场"（软切换不触碰 preset 层） |
-| wb-market 尚未退役的共存期 | 两者无共享命名域（无召唤工具、无共同路由），仅市场页语义重叠，P2 切换后移除 wb-market |
+| wb-market 尚未退役的共存期 | 两者无共享命名域（无召唤工具、无共同路由），仅市场页语义重叠，P2 切换后移除 wb-market（已核销：wb-market 退役，见 README 迁移指引） |
 
 ## 10. 交付切分
 
