@@ -288,15 +288,19 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
   button.props.onClick()
   view.rerender()
   const items = findAll(view.tree(), (node) => node.type === 'button' && node.props.className === 'wbe-item')
-  assert.deepEqual(items.map((item) => item.children[0].children[1].children[0]),
+  // Row shape: [AvatarFace, wbe-item-main] — the avatar leads every row,
+  // the text column nests one level deeper than it used to.
+  const mainOf = (item) => item.children.find((child) => child?.props?.className === 'wbe-item-main')
+  assert.ok(items.every((item) => item.children[0]?.type === mod.AvatarFace), 'each row leads with the avatar face')
+  assert.deepEqual(items.map((item) => mainOf(item).children[0].children[1].children[0]),
     ['broken-one', 'editor', 'writer'], 'cards render in (order, id) with broken rows listed')
   assert.equal(items[0].props.disabled, true, 'the broken card is not pickable')
   assert.ok(String(findAll(items[0], (n) => n?.props?.className === 'wbe-item-broken')[0]?.children ?? []).includes('不可用'),
     'the broken badge carries the localized stamp')
-  assert.ok(String(items[0].children.filter((c) => c?.props?.className === 'wbe-item-reason')[0]?.children[0]).includes('expert.yml missing'),
+  assert.ok(String(findAll(items[0], (n) => n?.props?.className === 'wbe-item-reason')[0]?.children[0] ?? []).includes('expert.yml missing'),
     'the broken reason rides the row')
   const editorRow = items[1]
-  assert.ok(editorRow.children[0].children.some((c) => c?.props?.className === 'wbe-current-mark'),
+  assert.ok(mainOf(editorRow).children[0].children.some((c) => c?.props?.className === 'wbe-current-mark'),
     'the current expert is marked')
 
   // Pick the writer: busy state (disabled + target name) until settle.
@@ -340,7 +344,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
   button.props.onClick()
   view.rerender()
   const items = findAll(view.tree(), (node) => node.type === 'button' && node.props.className === 'wbe-item')
-  items.find((item) => item.children[0].children[1].children[0] === 'writer').props.onClick()
+  items.find((item) => item.children.find((c) => c?.props?.className === 'wbe-item-main')?.children[0].children[1].children[0] === 'writer').props.onClick()
   view.rerender()
   button = buttonOf(view.tree())
   assert.equal(labelOf(button), '创建后启用 撰稿人', 'the staged pick renames the control')
@@ -698,9 +702,10 @@ const SAME_ORIGIN = { origin: 'http://x.invalid', host: 'x.invalid' }
   const dispose = mountSelectorRoutes({ webServer: server }, { registry, switcher, resolveAgent })
   assert.deepEqual([...server.routes.keys()].sort(), [
     'exact /dsh-workbuddy-expert/api/after-create',
+    'exact /dsh-workbuddy-expert/api/expert-avatar',
     'exact /dsh-workbuddy-expert/api/experts',
     'exact /dsh-workbuddy-expert/api/switch',
-  ], 'exactly the three selector routes registered')
+  ], 'exactly the four selector routes registered')
 
   const route = (path) => server.routes.get(`exact ${path}`).handler
 

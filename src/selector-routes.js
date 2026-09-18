@@ -13,6 +13,14 @@
  *                                       the in-memory projection, the
  *                                       zod-gated session projection stays
  *                                       deferred, see ticket DEVIATIONS);
+ *   GET  /dsh-workbuddy-expert/api/expert-avatar?id=<id>
+ *                                     → the INSTALLED expert's avatar.png
+ *                                       (the installer's copied PNG) read
+ *                                       on demand from the registry table;
+ *                                       image/png + max-age=60; unknown or
+ *                                       avatar-less ids answer one uniform
+ *                                       404 (same no-probe rule as the
+ *                                       importer's source-side avatar route);
  *   POST /dsh-workbuddy-expert/api/switch {sessionId, expertId}
  *                                     → the serialized soft-switch
  *                                       transaction; answers the transaction's
@@ -39,6 +47,9 @@
  * routes degrade to a clean domain error when it cannot resolve — never a
  * fiber crash.
  */
+
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 export const ROUTE_BASE = '/dsh-workbuddy-expert'
 
@@ -135,6 +146,37 @@ export function mountSelectorRoutes(hostCtx, { registry, switcher, resolveAgent 
         })
       } catch (error) {
         sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+      }
+    },
+  })
+
+  // The installed expert's avatar.png: the registry card's dir is internal
+  // scan output (never request input), and the card only carries avatarUrl
+  // when the scan saw the file — the route just streams those bytes. Every
+  // miss (unknown id, avatar-less expert, vanished file) answers ONE
+  // uniform 404, mirroring the importer's source-side avatar route.
+  register({
+    kind: 'exact',
+    path: `${ROUTE_BASE}/api/expert-avatar`,
+    handler: async (request, response) => {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        sendJson(response, 405, { error: 'method not allowed' })
+        return
+      }
+      const notFound = () => sendJson(response, 404, { error: 'not found' })
+      try {
+        const id = new URL(request.url ?? '/', 'http://internal.invalid').searchParams.get('id')
+        const card = id === null ? undefined
+          : (await registry.list()).experts.find((expert) => expert.id === id)
+        if (card === undefined || card.avatarUrl === undefined) {
+          notFound()
+          return
+        }
+        const bytes = await readFile(join(card.dir, 'avatar.png'))
+        response.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'max-age=60' })
+        response.end(bytes)
+      } catch {
+        notFound()
       }
     },
   })

@@ -10,7 +10,8 @@
 
 1. **专家文件夹**——专家是一个独立目录（`expert.yml` + `role.md` + 可选 `skills/`、`scripts/`），手写放进发现根即被识别；
 2. **软切换**——任意会话、任意时刻 `/expert <name>` 整组替换角色描述与 skills，保留全部历史，在下一个模型请求边界生效；**没有 preset 开场，没有召唤**；
-3. **WorkBuddy 市场**（设置 → WorkBuddy 专家）——运行时只读扫描本地 WorkBuddy 专家目录（默认 `~/.workbuddy/plugins/marketplaces/experts/plugins`），卡片浏览/搜索/分类，行内安装（= 导出成同格式专家文件夹到 `~/.dsh/experts/`）、更新（就地重导）、卸载（删文件夹）。
+3. **WorkBuddy 市场**（设置 → WorkBuddy 专家）——运行时只读扫描本地 WorkBuddy 专家目录（默认 `~/.workbuddy/plugins/marketplaces/experts/plugins`），卡片浏览/搜索/分类，安装（= 导出成同格式专家文件夹到 `~/.dsh/experts/`）、更新（就地重导）、卸载（删文件夹）；操作按钮收在卡片右上角，hover/聚焦卡片时浮现（未装 → 安装，已装 → 卸载/更新）。
+4. **会话选择器**——输入框旁的专家胶囊展开的列表带头像：安装时随卡导出 `avatar.png`（手写专家也可在文件夹里放同名文件），经 `/api/expert-avatar` 按需读取；无头像回落 emoji。
 
 ## 快速开始（手写一个专家）
 
@@ -76,11 +77,11 @@ dsh --profile web --dump-config
 设置 → WorkBuddy 专家：
 
 - **源路径**：顶栏可改（宿主 settings 命名空间 `workbuddy-expert` 的 `sourcePath`，`~` 原串存储使用时展开；允许保存不存在路径，页面黄条提示，路径就绪自动恢复）；「刷新」强制重扫，平时靠逐文件指纹自动重扫。
-- **安装 = 导出**：扫描卡 → `~/.dsh/experts/<id>/`（expert.yml + 清洗后 role.md + skills 整树），指纹清单落 `.expert-source.json`。
+- **安装 = 导出**：扫描卡 → `~/.dsh/experts/<id>/`（expert.yml + 清洗后 role.md + skills 整树 + 源卡有 PNG 时 `avatar.png`），指纹清单落 `.expert-source.json`。
 - **更新**：源有变时卡片亮 updatable，更新 = 就地重导；清单丢失/损坏 → broken + "清单缺失，请卸载重装"。
 - **卸载**：删整个专家文件夹。
 - **孤儿区**：换过源后，装自别的源的专家单列"已安装但不在当前源"，只呈列不阻塞。
-- HTTP 路由前缀 `/dsh-workbuddy-expert`（`/api/state|avatar|config|refresh|install|update|uninstall`）：同源 POST、4 KiB 上限、安装互斥单飞、`no-store`（avatar `max-age=60`）；只读 WorkBuddy 目录，绝不写它，零数据外发。
+- HTTP 路由前缀 `/dsh-workbuddy-expert`（`/api/state|avatar|config|refresh|install|update|uninstall|experts|expert-avatar|switch|after-create`）：同源 POST、4 KiB 上限、安装互斥单飞、`no-store`（avatar/expert-avatar `max-age=60`）；只读 WorkBuddy 目录，绝不写它，零数据外发。
 
 ## 配置
 

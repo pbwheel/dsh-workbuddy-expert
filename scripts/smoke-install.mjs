@@ -156,6 +156,9 @@ srcWrite('plug-a/.codebuddy-plugin/plugin.json', JSON.stringify({
   profession: { en: 'Export Expert', zh: '导出专家' },
   displayDescription: { zh: '导出引擎的中文描述。' },
 }))
+// The plugin's avatar PNG (first png in avatars/): install copies it beside
+// expert.yml as avatar.png — the registry/selector face.
+srcWrite('plug-a/avatars/face.png', '\x89PNG\r\n\x1a\nfake-bytes')
 // A second plugin, later the orphan scenario needs a card that disappears.
 srcWrite('plug-b/agents/vanish-card.md', '---\nname: vanish-card\ndescription: Later removed.\n---\n\n正文。\n')
 srcWrite('plug-b/.codebuddy-plugin/plugin.json', JSON.stringify({ name: 'plug-b' }))
@@ -223,6 +226,12 @@ const mode = (path) => statSync(path).mode & 0o777
   assert.ok(existsSync(join(dir, 'skills', 'references', 'data.md')), 'a skill dir without SKILL.md is still copied')
   assert.ok(existsSync(join(dir, 'skills', 'empty-skill')), 'an empty skill directory is still copied')
   assert.equal(mode(join(dir, 'skills', 'references', 'data.md')), 0o600)
+
+  // avatar.png: the scan card's PNG copied verbatim, owner-only.
+  assert.equal(readFileSync(join(dir, 'avatar.png'), 'utf-8'),
+    readFileSync(join(sourceRoot, 'plug-a', 'avatars', 'face.png'), 'utf-8'),
+    'the avatar PNG copies beside expert.yml')
+  assert.equal(mode(join(dir, 'avatar.png')), 0o600, 'the avatar PNG is owner-only')
 
   // .expert-source.json: the fingerprint manifest.
   const manifest = JSON.parse(readFileSync(join(dir, MANIFEST_NAME), 'utf8'))

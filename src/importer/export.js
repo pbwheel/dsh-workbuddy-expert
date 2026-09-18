@@ -249,6 +249,16 @@ async function exportCard(card, rawSourcePath, expertsRoot, now) {
   await rm(join(dir, 'skills'), { recursive: true, force: true })
   await copyTree(join(expandTildePath(rawSourcePath), card.pluginDir, 'skills'), join(dir, 'skills'))
 
+  // avatar.png: the scan card's PNG copied beside expert.yml (the registry
+  // exposes it to the session selector). Whole-file sync like skills/ —
+  // remove first so an update whose source lost the PNG leaves no stale
+  // face behind; the scanner already existence-checked avatarPath.
+  await rm(join(dir, 'avatar.png'), { force: true })
+  if (card.avatarPath !== undefined) {
+    await writeFile(join(dir, 'avatar.png'), await readFile(card.avatarPath), { mode: FILE_MODE })
+    await chmod(join(dir, 'avatar.png'), FILE_MODE)
+  }
+
   await writeSecure(join(dir, MANIFEST_NAME), `${JSON.stringify({
     sourcePath: rawSourcePath,
     pluginDir: card.pluginDir,

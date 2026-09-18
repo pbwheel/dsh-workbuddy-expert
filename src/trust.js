@@ -12,13 +12,15 @@
  *      telling the model NOT to run its scripts/ and how to unlock them;
  *      a trusting project expert carries a one-time (per composition)
  *      release notice;
- *   3. best-effort hard enforcement: mountScriptGuard() probes the agent
- *      scoped context for a tool-guard API (ctx.tools / ctx.get('tools')
- *      with a callable .guard). The harness bundle was grepped for the
- *      ToolGuard contract ('guard' — zero hits in lib/*.js), so no shape
- *      is verifiable today: the probe stays isolated here, wrapped in
- *      try/catch, and degrades to the prompt-paragraph-only path with ONE
- *      warning whenever the contract cannot be confirmed.
+ *   3. hard enforcement: mountScriptGuard() registers one guard through the
+ *      VERIFIED dsh-tools contract `tools.guard(execution => reason |
+ *      undefined)` (packages/core/tools/src/index.ts — a monotonic denial
+ *      check evaluated after the tools/pre-execute waterfall; registered on
+ *      the agent scoped context it applies only to that agent). The command
+ *      string is read from the ToolExecution field `arguments` (the parsed
+ *      tool-call JSON, e.g. `{ command }` for the bash tool). Any missing or
+ *      throwing piece degrades to the prompt-paragraph-only path with ONE
+ *      warning — never a fiber crash.
  */
 
 import { join, sep } from 'node:path'
@@ -82,15 +84,24 @@ export function commandTargetsExpertScripts(command, expertCard) {
   return false
 }
 
-/** Pull a plausible command string out of an unknown tool-call shape. */
-function commandOf(call) {
-  if (call === null || typeof call !== 'object') return ''
+/**
+ * Pull a plausible command string out of a ToolExecution. The verified field
+ * is `arguments` (the parsed tool-call JSON; the bash tool carries its
+ * command at `arguments.command`); the remaining probes stay for defensive
+ * parity with unknown tool shapes.
+ * @param {object} execution - a dsh-tools ToolExecution
+ * @returns {string}
+ */
+function commandOf(execution) {
+  if (execution === null || typeof execution !== 'object') return ''
+  const args = execution.arguments
   const candidates = [
-    call.command,
-    call.args?.command,
-    call.input?.command,
-    call.parameters?.command,
-    typeof call.args === 'string' ? call.args : '',
+    args?.command,
+    execution.command,
+    args?.args?.command,
+    args?.input?.command,
+    args?.parameters?.command,
+    typeof args === 'string' ? args : '',
   ]
   for (const candidate of candidates) {
     if (typeof candidate === 'string' && candidate !== '') return candidate
@@ -99,13 +110,25 @@ function commandOf(call) {
 }
 
 /**
- * Best-effort hard enforcement for an untrusted project expert: if the agent
- * scoped context exposes a callable tool guard (ctx.tools.guard or
- * toolsService.guard), register one that denies bash/exec-like invocations
- * whose command references the expert's scripts/ directory. No ToolGuard
- * contract is verifiable in the harness source today, so EVERY step is
- * defensive: any missing/throwing piece degrades to the prompt-paragraph-only
- * path with exactly one warning, and the returned disposer is always safe.
+ * The denial reason the guard returns for a call referencing this expert's
+ * scripts/ directory (dsh-tools renders it as the call's error result).
+ * @param {object} expertCard - registry card
+ * @returns {string}
+ */
+function scriptDenialReason(expertCard) {
+  return `该专家（${expertCard.id}）来自项目仓库且未声明 trust_scripts: true，`
+    + '其 scripts/ 下的脚本已被拒绝执行；请在 expert.yml 声明 trust_scripts: true 后重试。'
+}
+
+/**
+ * Hard enforcement for an untrusted project expert: register one
+ * `tools.guard(execution => reason | undefined)` on the AGENT's scoped
+ * context (applies only to that agent; evaluated before every tool body).
+ * The guard denies any call whose command string references the expert's
+ * scripts/ directory and returns undefined otherwise. Every step stays
+ * defensive: a missing tools service or guard, or a throwing registration,
+ * degrades to the prompt-paragraph-only path with exactly one warning, and
+ * the returned disposer is always safe.
  *
  * @param {object} agentCtx - the agent-scoped cordis context
  * @param {object} expertCard - registry card
@@ -117,7 +140,7 @@ export function mountScriptGuard(agentCtx, expertCard, logger = {}) {
   const noop = () => {}
   try {
     if (scriptsAllowedFor(expertCard)) return noop
-    const tools = typeof agentCtx?.get === 'function' ? agentCtx.get('tools') : agentCtx?.tools
+    const tools = typeof agentCtx?.get === 'function' ? agentCtx.get('tools') : undefined
     const guard = tools?.guard
     if (tools === undefined || typeof guard !== 'function') {
       warn(`dsh-workbuddy-expert: expert "${expertCard.id}" 的脚本硬拦截不可用（无 tools.guard 契约）——已降级为仅提示段落门控`)
@@ -125,19 +148,11 @@ export function mountScriptGuard(agentCtx, expertCard, logger = {}) {
     }
     let unguard = null
     try {
-      unguard = guard({
-        name: `expert-script-guard:${expertCard.id}`,
-        async exec(call, next) {
-          const toolName = String(call?.name ?? call?.tool ?? '')
-          const command = commandOf(call)
-          const shellLike = /bash|shell|exec|terminal|command/i.test(toolName) || command !== ''
-          if (shellLike && commandTargetsExpertScripts(command, expertCard)) {
-            throw new Error(
-              `该专家（${expertCard.id}）来自项目仓库且未声明 trust_scripts: true，其 scripts/ 下的脚本已被拒绝执行；请在 expert.yml 声明 trust_scripts: true 后重试。`,
-            )
-          }
-          return typeof next === 'function' ? next(call) : undefined
-        },
+      unguard = guard(function expertScriptGuard(execution) {
+        const command = commandOf(execution)
+        return command !== '' && commandTargetsExpertScripts(command, expertCard)
+          ? scriptDenialReason(expertCard)
+          : undefined
       })
     } catch (error) {
       warn(`dsh-workbuddy-expert: tools.guard 拒绝注册脚本拦截（${error instanceof Error ? error.message : String(error)}）——已降级为仅提示段落门控`)

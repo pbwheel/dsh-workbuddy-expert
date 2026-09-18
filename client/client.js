@@ -73,6 +73,9 @@ var CSS = `
 .wbe-btn:hover:not(:disabled) { background: var(--dsw-interactive-bg-hover, rgba(127,127,127,.12)); color: var(--dsw-alias-label-primary, inherit); }
 .wbe-btn:disabled { opacity: .6; cursor: default; }
 .wbe-btn[data-staged="true"] { color: var(--dsw-alias-brand-primary, #4f6ef7); }
+.wbe-btn-avatar { width: 18px; height: 18px; flex: none; border-radius: 5px; object-fit: cover;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 11px; line-height: 1;
+  background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,.18)); }
 .wbe-btn-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wbe-caret { flex: none; font-size: 10px; line-height: 1; color: var(--dsw-alias-label-tertiary, inherit); }
 .wbe-spin { display: inline-block; width: 11px; height: 11px; border-radius: 50%;
@@ -84,9 +87,13 @@ var CSS = `
   background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2, inherit));
   box-shadow: var(--dsw-shadow-lv3, 0 8px 24px rgba(0,0,0,.18)); z-index: 10000; }
 .wbe-menu-title { padding: 8px 10px 6px; font-size: 12px; line-height: 16px; color: var(--dsw-alias-label-tertiary, inherit); }
-.wbe-item { display: flex; flex-direction: column; gap: 1px; width: 100%; padding: 8px 10px;
+.wbe-item { display: flex; gap: 8px; align-items: flex-start; width: 100%; padding: 8px 10px;
   border: none; border-radius: 10px; background: transparent; cursor: pointer; text-align: left;
   color: var(--dsw-alias-label-primary, inherit); box-sizing: border-box; }
+.wbe-item-main { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 1px; }
+.wbe-avatar { width: 28px; height: 28px; flex: none; border-radius: 8px; object-fit: cover;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 15px; line-height: 1;
+  background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,.18)); }
 .wbe-item:hover:not(:disabled), .wbe-item:focus-visible { background: var(--dsw-interactive-bg-hover, rgba(127,127,127,.12)); }
 .wbe-item:disabled { opacity: .55; cursor: default; }
 .wbe-item[data-current="true"] { background: color-mix(in srgb, var(--dsw-alias-brand-primary, #4f6ef7) 8%, transparent); }
@@ -238,7 +245,7 @@ var MARKET_CSS = `
 /* ── the card grid ────────────────────────────────────────────────────────── */
 .wbx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 10px;
   list-style: none; margin: 0; padding: 0; }
-.wbx-card { display: flex; flex-direction: column; gap: 7px; box-sizing: border-box; min-width: 0;
+.wbx-card { position: relative; display: flex; flex-direction: column; gap: 7px; box-sizing: border-box; min-width: 0;
   padding: 12px; border: 1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.28)); border-radius: 12px;
   background: var(--dsw-alias-bg-layer-1, transparent); }
 .wbx-card:hover { background: var(--dsw-interactive-bg-hover, rgba(127,127,127,.06)); }
@@ -268,7 +275,7 @@ var MARKET_CSS = `
 .wbx-badge[data-kind="team"] { color: var(--dsw-alias-brand-primary, #4f6ef7);
   border-color: color-mix(in srgb, var(--dsw-alias-brand-primary, #4f6ef7) 40%, transparent); }
 
-/* ── the card footer: status marks over the inline action row ───────────── */
+/* ── the card footer: the status marks row (actions live in the corner) ──── */
 .wbx-foot { margin-top: auto; padding-top: 7px; display: flex; flex-direction: column; gap: 6px;
   border-top: 1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.18)); }
 .wbx-status { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
@@ -277,6 +284,16 @@ var MARKET_CSS = `
 .wbx-mark[data-kind="upd"] { color: var(--dsw-alias-brand-primary, #4f6ef7); }
 .wbx-mark[data-kind="bad"] { color: var(--dsw-alias-state-warn-primary, #c77700); }
 .wbx-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+/* The card's action corner: top-right, revealed on card hover — or on
+   focus-within, so keyboard users tabbing into the buttons see them. Its
+   opaque backdrop keeps the row readable over the title/id it overlays. */
+.wbx-corner { position: absolute; top: 8px; right: 8px; z-index: 1; display: flex; flex-wrap: wrap;
+  gap: 6px; align-items: center; justify-content: flex-end; padding: 4px; border-radius: 10px;
+  background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2, rgba(30,30,30,.92)));
+  border: 1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.28));
+  opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+.wbx-card:hover .wbx-corner, .wbx-card:focus-within .wbx-corner { opacity: 1; pointer-events: auto; }
 
 /* ── the team group view: one collapsible section per team ───────────────── */
 .wbx-group { grid-column: 1 / -1; list-style: none; }
@@ -355,6 +372,7 @@ var MARKET_CSS = `
 @media (prefers-reduced-motion: reduce) {
   .wbx-skel-card { animation: none; }
   .wbx-spin { animation: none; }
+  .wbx-corner { transition: none; }
 }
 `
 
@@ -805,9 +823,15 @@ function ExpertSelector (props) {
 
   // The button's face: the switching target while a transaction runs
   // (disabled), the staged pick while no session exists, otherwise the
-  // current expert's name (or the bare 专家 label when none).
+  // current expert's name (or the bare 专家 label when none). The face
+  // expert rides the same resolution so the button shows the avatar
+  // beside the name whenever a concrete expert occupies the seat.
   var busy = switching !== null
+  var faceExpert = null
   var faceName = ''
+  if (busy) faceExpert = byId[switching.expertId]
+  else if (staged !== null) faceExpert = byId[staged.expertId]
+  else if (currentExpertId !== '') faceExpert = byId[currentExpertId]
   if (busy) faceName = nameOf(byId[switching.expertId]) || switching.expertId
   else if (staged !== null) faceName = nameOf(byId[staged.expertId]) || staged.expertId
   else if (currentExpertId !== '') faceName = nameOf(byId[currentExpertId]) || currentExpertId
@@ -832,16 +856,18 @@ function ExpertSelector (props) {
         title: broken ? strOf(expert.broken) : strOf(expert.description),
         onClick: function () { pick(expert) }
       },
-        el('span', { className: 'wbe-item-line' },
-          el('span', { className: 'wbe-item-name' }, nameOf(expert)),
-          el('span', { className: 'wbe-item-id' }, strOf(expert.id)),
-          broken ? el('span', { className: 'wbe-item-broken' }, '⚠ ', t('brokenStamp')) : null,
-          current ? el('span', { className: 'wbe-current-mark' }, '✓ ', t('currentMark')) : null,
-          isStaged ? el('span', { className: 'wbe-current-mark' }, t('stagedMark')) : null),
-        strOf(expert.description) !== '' && !broken
-          ? el('span', { className: 'wbe-item-desc' }, strOf(expert.description))
-          : null,
-        broken ? el('span', { className: 'wbe-item-reason' }, strOf(expert.broken)) : null)
+        el(AvatarFace, { expert: expert, imgClass: 'wbe-avatar', glyphClass: 'wbe-avatar' }),
+        el('span', { className: 'wbe-item-main' },
+          el('span', { className: 'wbe-item-line' },
+            el('span', { className: 'wbe-item-name' }, nameOf(expert)),
+            el('span', { className: 'wbe-item-id' }, strOf(expert.id)),
+            broken ? el('span', { className: 'wbe-item-broken' }, '⚠ ', t('brokenStamp')) : null,
+            current ? el('span', { className: 'wbe-current-mark' }, '✓ ', t('currentMark')) : null,
+            isStaged ? el('span', { className: 'wbe-current-mark' }, t('stagedMark')) : null),
+          strOf(expert.description) !== '' && !broken
+            ? el('span', { className: 'wbe-item-desc' }, strOf(expert.description))
+            : null,
+          broken ? el('span', { className: 'wbe-item-reason' }, strOf(expert.broken)) : null))
     })
     menu = el('div', { className: 'wbe-menu', role: 'listbox', 'aria-label': t('menuTitle') },
       el('div', { className: 'wbe-menu-title' }, t(sessionId !== '' ? 'menuTitle' : 'menuTitleDraft')),
@@ -869,6 +895,9 @@ function ExpertSelector (props) {
       onClick: function () { setOpen(function (prev) { return !prev }) }
     },
       busy ? el('span', { className: 'wbe-spin', 'aria-hidden': 'true' }) : null,
+      faceExpert !== null && faceExpert !== undefined
+        ? el(AvatarFace, { expert: faceExpert, imgClass: 'wbe-btn-avatar', glyphClass: 'wbe-btn-avatar' })
+        : null,
       el('span', { className: 'wbe-btn-label' }, buttonLabel),
       el('span', { className: 'wbe-caret', 'aria-hidden': 'true' }, '▴')),
     menu)
@@ -1203,8 +1232,10 @@ function AvatarFace (props) {
  * id, a locale-following two-line description, provenance badges (source
  * plugin / skills count / team), TOLERANT status marks — ✓ installed /
  * ↑ updatable / ⚠ broken render only when the merged card carries the
- * field — and the inline action row. Handler props are optional so
- * read-only renders (the smoke's card-only checks) keep working.
+ * field — and the action row parked in the top-right corner, revealed on
+ * hover/focus (安装 → 卸载/更新 per install state). Handler props are
+ * optional so read-only renders (the smoke's card-only checks) keep
+ * working.
  */
 function ExpertCard (props) {
   var t = props.t
@@ -1253,15 +1284,7 @@ function ExpertCard (props) {
     'data-installed': expert.installed === true ? 'true' : undefined,
     'data-broken': expert.broken === true ? 'true' : undefined
   },
-    el('div', { className: 'wbx-card-top' },
-      avatar,
-      el('div', { className: 'wbx-card-title' },
-        el('span', { className: 'wbx-name', title: name }, name),
-        el('span', { className: 'wbx-id' }, strOf(expert.id)))),
-    el('p', { className: 'wbx-desc' }, localeDescriptionOf(expert, localeId)),
-    badges.length > 0 ? el('div', { className: 'wbx-badges' }, badges) : null,
-    el('div', { className: 'wbx-foot' },
-      marks.length > 0 ? el('div', { className: 'wbx-status' }, marks) : null,
+    el('div', { className: 'wbx-corner' },
       el(ActionRow, {
         t: t,
         rowKey: rowKey,
@@ -1278,7 +1301,16 @@ function ExpertCard (props) {
         onAction: function (action) {
           if (typeof props.onAction === 'function') props.onAction(expert, action)
         }
-      })))
+      })),
+    el('div', { className: 'wbx-card-top' },
+      avatar,
+      el('div', { className: 'wbx-card-title' },
+        el('span', { className: 'wbx-name', title: name }, name),
+        el('span', { className: 'wbx-id' }, strOf(expert.id)))),
+    el('p', { className: 'wbx-desc' }, localeDescriptionOf(expert, localeId)),
+    badges.length > 0 ? el('div', { className: 'wbx-badges' }, badges) : null,
+    marks.length > 0 ? el('div', { className: 'wbx-foot' },
+      el('div', { className: 'wbx-status' }, marks)) : null)
 }
 
 /**
@@ -2155,6 +2187,7 @@ module.exports.nameOf = nameOf
 module.exports.sessionIdOf = sessionIdOf
 module.exports.expertsUrl = expertsUrl
 module.exports.ExpertSelector = ExpertSelector
+module.exports.AvatarFace = AvatarFace
 // The market page (ticket 08), same loader-tolerant export pattern.
 module.exports.AVATAR_EMOJI = AVATAR_EMOJI
 module.exports.NO_CATEGORY = NO_CATEGORY

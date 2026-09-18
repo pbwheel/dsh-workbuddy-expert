@@ -9,8 +9,10 @@
  *     handler(invocation: { commandId, agent, rawInput, attachments, signal })
  *       → { kind: 'success' | 'error', text } | Promise<…> }) → disposer
  *
- * The seam stays defensive: when `ctx.get('commands')` is absent the command
- * warns ONCE and stays inert (the plugin waits; never a hard failure).
+ * The seam stays defensive: when `ctx.get('commands')` is absent (plain test
+ * doubles) the command warns ONCE and stays inert. The live wiring mounts
+ * this through a staged `ctx.inject(['commands'], …)` (src/index.js), so a
+ * late-registering service still gets the command.
  */
 
 export const COMMAND_NAME = 'expert'
@@ -70,7 +72,8 @@ export function registerExpertCommand(ctx, registry, switcher, rootPaths = []) {
   if (commands === undefined || typeof commands.register !== 'function') {
     ctx.logger?.warn?.(
       'dsh-workbuddy-expert: the commands service is not available — /expert is not registered; '
-      + 'ctx.experts.list() remains usable and registration retries are unnecessary (the plugin inertly waits).',
+      + 'ctx.experts.list() remains usable (the live wiring stages this call through ctx.inject, '
+      + 'so a late-registering service still gets the command).',
     )
     return () => {}
   }

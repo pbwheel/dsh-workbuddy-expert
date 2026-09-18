@@ -88,10 +88,16 @@ export function apply(ctx, config = {}) {
   }, 'dsh-workbuddy-expert:service')
 
   // Command: `/expert` lists; `/expert <id>` soft-switches (ticket 03).
-  ctx.effect(
-    () => registerExpertCommand(ctx, registry, switcher, roots.map((root) => root.path)),
-    'dsh-workbuddy-expert:command',
-  )
+  // Staged inject (the selector-routes lesson): the commands service may
+  // register after this plugin applies, and a synchronous one-shot ctx.get
+  // would silently skip the registration with no retry — the segment mounts
+  // the moment the service is live.
+  ctx.inject(['commands'], (commandsCtx) => {
+    ctx.effect(
+      () => registerExpertCommand(commandsCtx, registry, switcher, roots.map((root) => root.path)),
+      'dsh-workbuddy-expert:command',
+    )
+  })
 
   // Selector routes (ticket 05): GET /api/experts, POST /api/switch,
   // POST /api/after-create — the client control's transport. Staged inject

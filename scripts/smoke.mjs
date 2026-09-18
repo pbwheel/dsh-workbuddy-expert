@@ -45,12 +45,15 @@
  *  13. script trust gating (ticket 04): trust_scripts parses onto the card
  *      (default false) with the computed scriptsAllowed field; an untrusted
  *      project expert composes with the guard paragraph + one degrade
- *      warning when no tools.guard contract exists; a trusting project
- *      expert composes with the one-time release notice; a user-rank expert
- *      gets neither; commandTargetsExpertScripts matches only the expert's
- *      own scripts/ references; mountScriptGuard denies a referencing bash
- *      call, passes unrelated calls through, unmounts, and degrades with
- *      one warning when guard registration throws.
+ *      warning when the tools service is absent; a trusting project expert
+ *      composes with the one-time release notice; a user-rank expert gets
+ *      neither; commandTargetsExpertScripts matches only the expert's own
+ *      scripts/ references; mountScriptGuard registers a FUNCTION guard per
+ *      the dsh-tools ToolGuard contract (execution => reason | undefined,
+ *      command read from execution.arguments.command), returns the denial
+ *      reason for a referencing bash call and undefined for unrelated
+ *      calls, unmounts, and degrades with one warning when guard
+ *      registration throws.
  *  14. tools.allow whitelist (ticket 10): expert.yml parsing (block list,
  *      inline flow list, declared-empty, missing allow, invalid scalar /
  *      scalar tools / empty item → broken rows), compose mounts the scoped
@@ -242,6 +245,16 @@ assert.deepEqual(scan.experts.map((expert) => expert.id).sort(),
   assert.ok(card.skills[0].text.includes('{ { bogus }}') && card.skills[0].text.includes('{{provider}}'),
     'SKILL.md content is sanitized with the same pipeline')
   assert.equal(card.trustScripts, false, 'trust_scripts defaults to false')
+  assert.equal(card.avatarUrl, undefined, 'a folder without avatar.png carries no avatarUrl')
+}
+
+// avatar.png in the folder → the card carries the expert-avatar URL the
+// session selector renders as its face (glyph fallback without one).
+{
+  fixtureWrite(userRoot, 'video-editor/avatar.png', '\x89PNG\r\n\x1a\n')
+  const card = (await scanDiscoveryRoots(roots)).experts.find((expert) => expert.id === 'video-editor')
+  assert.equal(card.avatarUrl, '/dsh-workbuddy-expert/api/expert-avatar?id=video-editor',
+    'an avatar.png in the expert folder exposes the expert-avatar URL')
 }
 
 // Broken rows carry reasons.
@@ -490,13 +503,15 @@ assert.equal(plugin.name, 'dsh-workbuddy-expert')
       return disposers[disposers.length - 1].dispose
     },
     // Minimal staged-inject emulation: the callback fires only when every
-    // named service is present on the fake ctx (none are in this fixture —
-    // matching the real host's waiting behavior for absent services).
+    // named service resolves (via property or get(), like a declared real
+    // inject); an absent dependency leaves the callback parked, matching the
+    // real host's waiting behavior.
     inject(names, callback) {
-      const scopeCtx = {}
+      const scopeCtx = { get: (serviceName) => this.get(serviceName) }
       for (const dep of names) {
-        if (this[dep] === undefined) return () => {}
-        scopeCtx[dep] = this[dep]
+        const service = this.get(dep)
+        if (service === undefined) return () => {}
+        scopeCtx[dep] = service
       }
       callback(scopeCtx)
       return () => {}
@@ -833,16 +848,18 @@ const { SCRIPT_GUARD_PARAGRAPH, SCRIPT_TRUST_NOTICE_PARAGRAPH, commandTargetsExp
     assert.equal(commandTargetsExpertScripts('', untrusted), false, 'an empty command never matches')
   }
 
-  // mountScriptGuard over a fake ctx.tools.guard: deny referencing bash
-  // calls, pass unrelated calls through, unmount cleanly, degrade on throw.
+  // mountScriptGuard over a fake tools.guard (the VERIFIED dsh-tools
+  // contract: guard(execution => reason | undefined)): registers a plain
+  // function, returns the denial reason for a referencing bash call and
+  // undefined for unrelated calls, unmounts cleanly, degrades on throw.
   {
     const mounted = []
-    let guardExec = null
+    let guardFn = null
     const toolsService = {
-      guard(guardDef) {
-        mounted.push(guardDef)
-        guardExec = guardDef.exec
-        return () => { mounted.pop(); guardExec = null }
+      guard(fn) {
+        mounted.push(fn)
+        guardFn = fn
+        return () => { mounted.pop(); guardFn = null }
       },
     }
     const gateAgent = makeFakeAgent('gate-hard')
@@ -852,19 +869,24 @@ const { SCRIPT_GUARD_PARAGRAPH, SCRIPT_TRUST_NOTICE_PARAGRAPH, commandTargetsExp
     const logs = []
     const unguard = mountScriptGuard(gateAgent.ctx, untrusted, { warn: (m) => logs.push(m) })
     assert.equal(mounted.length, 1, 'a callable tools.guard mounted the interceptor')
-    assert.ok(mounted[0].name.startsWith('expert-script-guard:shared'), 'the guard is labeled per expert')
+    assert.equal(typeof mounted[0], 'function', 'the guard is a plain function (dsh-tools ToolGuard contract)')
     assert.equal(logs.length, 0, 'a confirmed contract logs nothing')
 
-    // Deny: a bash call referencing the expert's scripts/ directory.
-    await assert.rejects(
-      () => guardExec({ name: 'bash', args: { command: `bash ${join(untrusted.dir, 'scripts', 'x.sh')}` } }, async (c) => ({ ok: true })),
-      /trust_scripts/,
-      'a referencing bash invocation is rejected with the unlock hint')
-    // Pass-through: an unrelated command reaches next().
-    let nextArg = null
-    const passResult = await guardExec({ name: 'bash', args: { command: 'node scripts/smoke.mjs' } }, async (c) => { nextArg = c; return { ok: true } })
-    assert.deepEqual(nextArg, { name: 'bash', args: { command: 'node scripts/smoke.mjs' } }, 'unrelated commands reach next() untouched')
-    assert.deepEqual(passResult, { ok: true })
+    // Deny: a bash call whose parsed arguments reference the expert's scripts/.
+    const denial = guardFn({ name: 'bash', arguments: { command: `bash ${join(untrusted.dir, 'scripts', 'x.sh')}` } })
+    assert.ok(/trust_scripts/.test(String(denial)), 'a referencing bash invocation is denied with the unlock hint')
+
+    // Pass-through: unrelated commands and command-less calls return undefined.
+    assert.equal(
+      guardFn({ name: 'bash', arguments: { command: 'node scripts/smoke.mjs' } }),
+      undefined,
+      'unrelated commands are allowed',
+    )
+    assert.equal(
+      guardFn({ name: 'read', arguments: { file_path: '/etc/hosts' } }),
+      undefined,
+      'calls without a command string are allowed',
+    )
 
     unguard()
     assert.equal(mounted.length, 0, 'the disposer unmounts the guard')

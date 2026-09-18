@@ -380,6 +380,12 @@ export async function scanExpertFolder(dir, folderName, rootInfo) {
     trust: rootInfo.trust,
     dir,
     roleText,
+    // avatar.png: the installer's copied PNG (importer/export.js) — the
+    // session selector shows it through the expert-avatar route; a
+    // hand-written folder may drop one in by the same name.
+    avatarUrl: (await isFile(join(dir, 'avatar.png')))
+      ? `/dsh-workbuddy-expert/api/expert-avatar?id=${id}`
+      : undefined,
     trustScripts: fields.trust_scripts === 'true',
     // Computed (ticket 04): user-rank roots always allow scripts/, project
     // rank only with an explicit trust_scripts declaration.
