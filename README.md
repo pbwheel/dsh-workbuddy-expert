@@ -1,67 +1,71 @@
-# dsh-workbuddy-expert
+<div align="center">
 
-**DSH 专家文件夹：手写专家目录 + 会话内软切换 + WorkBuddy 专家市场**
+# DSH WorkBuddy Expert
 
-[English](README.en.md) · [设计文档](docs/design.md) · [LICENSE](LICENSE)
+**把 WorkBuddy 专家装进 DSH：专家市场一键导入 · 会话选择器随时切换**
+
+[English](README.en.md) · [功能](#功能) · [安装](#安装) · [设计文档](docs/design.md) · [MIT](LICENSE)
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![DSH Web Plugin](https://img.shields.io/badge/DSH%20Web-Plugin-0f766e.svg)](#安装)
+[![零构建](https://img.shields.io/badge/构建-零构建零依赖-0f766e.svg)](#开发)
+
+</div>
+
+> DSH WorkBuddy Expert 是社区维护的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）插件，并非 DeepSeek AI 官方产品。
+
+<!-- 演示动图（占位）：召唤 → 安装 → 选择 → 生效，拍摄后同名覆盖 docs/images/hero-demo.gif -->
+![演示：召唤 → 安装 → 选择 → 生效](docs/images/hero-demo.gif)
 
 ## 它是什么
 
-一个 DSH（DeepSeek Harness）Web 插件，是 DSH 里"专家"概念的**唯一载体**：
+一个 DSH Web 插件，让你把 [WorkBuddy](https://www.workbuddy.cn/) 专家中心的专家带进 DSH 工作流：
 
-1. **专家文件夹**——专家是一个独立目录（`expert.yml` + `role.md` + 可选 `skills/`、`scripts/`），手写放进发现根即被识别；
-2. **软切换**——任意会话、任意时刻 `/expert <name>` 整组替换角色描述与 skills，保留全部历史，在下一个模型请求边界生效；**没有 preset 开场，没有召唤**；
-3. **WorkBuddy 市场**（设置 → WorkBuddy 专家）——运行时只读扫描本地 WorkBuddy 专家目录（默认 `~/.workbuddy/plugins/marketplaces/experts/plugins`），卡片浏览/搜索/分类，安装（= 导出成同格式专家文件夹到 `~/.dsh/experts/`）、更新（就地重导）、卸载（删文件夹）；操作按钮收在卡片右上角，hover/聚焦卡片时浮现（未装 → 安装，已装 → 卸载/更新）。
-4. **会话选择器**——输入框旁的专家胶囊展开的列表带头像：安装时随卡导出 `avatar.png`（手写专家也可在文件夹里放同名文件），经 `/api/expert-avatar` 按需读取；无头像回落 emoji。
+- **专家市场**（设置 → WorkBuddy 专家）——只读扫描本地 WorkBuddy 专家目录，卡片浏览/搜索/分类，一键**安装 / 更新 / 卸载**，导出成标准专家文件夹；
+- **会话选择器**——输入框旁的专家胶囊，随时切换当前会话的专家：整组替换角色描述与 skills，**保留全部会话历史**，在下一个模型请求边界生效，不打断进行中的轮次；
+- **完整专家体验**——安装的专家自带角色描述、专属 skills 与头像，选择器列表即选即用。
 
-## 快速开始（手写一个专家）
+## 功能
 
-```sh
-mkdir -p ~/.dsh/experts/video-editor/skills/cut-video
-```
+### 1. WorkBuddy 专家市场（设置 → WorkBuddy 专家）
 
-`~/.dsh/experts/video-editor/expert.yml`：
+![专家市场（占位图）](docs/images/market.png)
 
-```yaml
-id: video-editor
-display_name: 视频剪辑专家
-description: 负责短视频剪辑、字幕烧录与导出
-order: 100
-trust_scripts: false
-```
+- **只读扫描**本地 WorkBuddy 专家目录（默认 `~/.workbuddy/plugins/marketplaces/experts/plugins`），绝不写它，零数据外发；
+- 卡片浏览/搜索/分类；操作按钮收在卡片右上角，hover/聚焦卡片时浮现（未装 → 安装，已装 → 卸载/更新）；
+- **安装 = 导出**成标准专家文件夹到 `~/.dsh/experts/<id>/`（expert.yml + 清洗后 role.md + skills 整树 + 源卡有 PNG 时 `avatar.png`），指纹清单落 `.expert-source.json`；
+- **更新**：源有变时卡片亮 updatable，更新 = 就地重导；**卸载** = 删整个专家文件夹；
 
-`~/.dsh/experts/video-editor/role.md`：角色描述正文（作为 system prompt 角色段）。
+### 2. 会话选择器
 
-可选 `skills/cut-video/SKILL.md`：遵循 dsh skill 约定；可选 `scripts/` 放可执行脚本与素材，由 SKILL.md 以 `./scripts/...` 相对引用。
+![会话选择器（占位图）](docs/images/picker.png)
 
-然后在任意会话里：
+- 输入框旁的专家胶囊展开带头像的专家列表，选中即切换当前会话的专家；
+- **切换保留全部会话历史**：角色描述与 skills 整组替换，在下一个模型请求边界生效；轮次进行中则排队到边界后应用，不打断流式输出；
+- 切换事务串行化：同一会话同时只允许一次切换；
+- 一切注册落在 agent scope 层：只影响当前会话，会话结束自动清理；
+- 创建新会话时也可先选专家，创建即生效——冷会话不存在"已选未生效"状态；
+- 新增/删除专家无需重启——发现根有 watcher，选择器（输入框区域 + 创建会话入口）自动刷新。
 
-```
-/expert                # 列出全部专家（含 broken 行与原因）
-/expert video-editor   # 软切换；保留历史，下一请求边界生效
-```
+### 3. 专家能力随会话生效
 
-新增/删除专家文件夹无需重启——发现根有 watcher，选择器（输入框区域 + 创建会话入口）自动刷新。
+![切换后会话轨迹（占位图）](docs/images/switch-trace.png)
 
-## 发现根与信任模型
+选中专家后，其能力即挂载到当前会话：
 
-| Rank | 来源 | 根 | 默认可执行 scripts/ |
-|---|---|---|---|
-| 100 | project | `<projectRoot>/.agents/experts` | ❌（需 `trust_scripts: true`，首次组装有 UI 提示） |
-| 200 | user | `~/.dsh/experts`（`DSH_HOME` 可改） | ✅（手写/市场安装动作即信任表态） |
+- **角色描述**（role.md）作为 system prompt 角色段注入；
+- **专属 skills**（skills/ 整树）随专家注册/注销；
+- **工具白名单**（expert.yml `tools.allow`，可选）挂载作用域工具限制，切换时自动解除；
+- 清单损坏的专家在选择器中列为 **broken 并给出原因**，不静默隐藏。
 
-- 同名专家按 rank 取胜：项目级覆盖用户级；市场导出物一律落 user rank。
-- **user rank 根的专家可直接执行 scripts/**；**project rank 默认拒绝**——skills 照常注册，但脚本调用在执行层被拒并提示"该专家来自项目仓库，未声明信任脚本"；expert.yml 声明 `trust_scripts: true` 才放行。
-- 追加根仅经挂载配置，必须显式 `trust: user`：
+## 快速开始
 
-```yaml
-- name: '@deepseek-ai/dsh-workbuddy-expert'
-  config:
-    roots:
-      - path: ~/company-experts
-        trust: user
-```
+前置条件：
 
-## 安装本插件
+- 已可正常运行 DeepSeek Harness Web，且终端可用 `dsh`。示例使用 `web` profile，请替换为实际目标 profile；
+- 本机已安装 [WorkBuddy](https://www.workbuddy.cn/) 桌面端。插件读取的是**本地**专家目录——专家必须先在 WorkBuddy 的专家中心点击**召唤**，才会下载落盘到 `~/.workbuddy/plugins/marketplaces/experts/plugins`。一个都没召唤过的话，市场页会是空列表。
+
+### 安装插件
 
 ```sh
 git clone <本仓库地址>
@@ -72,39 +76,41 @@ dsh --profile web --dump-config
 
 配置输出应出现 `dsh-workbuddy-expert`。然后**重启 `dsh web`**（bundles 列表只在启动时读）并**强刷浏览器**。零构建、零运行时依赖。
 
-## WorkBuddy 市场页
+### 让 Agent 帮你安装
 
-设置 → WorkBuddy 专家：
+把下面这段话发给任意能够执行本机终端命令的 Agent：
 
-- **源路径**：顶栏可改（宿主 settings 命名空间 `workbuddy-expert` 的 `sourcePath`，`~` 原串存储使用时展开；允许保存不存在路径，页面黄条提示，路径就绪自动恢复）；「刷新」强制重扫，平时靠逐文件指纹自动重扫。
-- **安装 = 导出**：扫描卡 → `~/.dsh/experts/<id>/`（expert.yml + 清洗后 role.md + skills 整树 + 源卡有 PNG 时 `avatar.png`），指纹清单落 `.expert-source.json`。
-- **更新**：源有变时卡片亮 updatable，更新 = 就地重导；清单丢失/损坏 → broken + "清单缺失，请卸载重装"。
-- **卸载**：删整个专家文件夹。
-- **孤儿区**：换过源后，装自别的源的专家单列"已安装但不在当前源"，只呈列不阻塞。
-- HTTP 路由前缀 `/dsh-workbuddy-expert`（`/api/state|avatar|config|refresh|install|update|uninstall|experts|expert-avatar|switch|after-create`）：同源 POST、4 KiB 上限、安装互斥单飞、`no-store`（avatar/expert-avatar `max-age=60`）；只读 WorkBuddy 目录，绝不写它，零数据外发。
+```text
+请将 DSH 插件 dsh-workbuddy-expert 从本仓库安装到 web profile：git clone <仓库地址> 后执行 dsh plugin --profile web add <目录>。安装后执行 dsh --profile web --dump-config，确认配置包含 dsh-workbuddy-expert，并告诉我如何重启 DSH Web 和开始使用。
+```
+
+### 三步用上 WorkBuddy 专家
+
+1. 打开**设置 → WorkBuddy 专家**，确认源路径指向本地 WorkBuddy 专家目录（默认 `~/.workbuddy/plugins/marketplaces/experts/plugins`，可在顶栏修改）。**列表为空？** 说明 WorkBuddy 里还没召唤过专家——回 WorkBuddy 专家中心点几个**召唤**，本地目录就位后市场页会自动出现卡片；
+2. 在卡片上点**安装**——专家即导出到 `~/.dsh/experts/`；
+3. 回到会话，点输入框旁的专家胶囊，选择刚安装的专家，开始对话。
+
+命令行也可以：`/expert` 列出全部专家，`/expert <name>` 切换。
 
 ## 配置
 
-- `sourcePath`：见上，市场页顶栏或 settings 直接改。
-- `roots`：可选追加发现根，必须显式 `trust: user`（见上例）。
-- `dshHome`：覆盖 DSH home 解析（默认 `$DSH_HOME` 或 `~/.dsh`）。
+| 配置项 | 默认值 | 作用 |
+|---|---|---|
+| `sourcePath` | `~/.workbuddy/plugins/marketplaces/experts/plugins` | WorkBuddy 源目录；市场页顶栏或 settings（ns `workbuddy-expert`）可改，`~` 原串存储使用时展开；允许保存不存在路径（页面黄条提示，路径就绪自动恢复） |
+| `roots` | — | 可选追加发现根，必须显式 `trust: user` |
+| `dshHome` | `$DSH_HOME` 或 `~/.dsh` | 覆盖 DSH home 解析 |
 
-## 退役与迁移：dsh-workbuddy-market
+追加根示例：
 
-本插件已**全覆盖并取代** [dsh-workbuddy-market](../dsh-workbuddy-market)（其 scanner/指纹/市场页代码平移进本插件）。wb-market 已退役，请从 profile 移除：
-
-```sh
-dsh plugin --profile web remove dsh-workbuddy-market
+```yaml
+- name: 'dsh-workbuddy-expert'
+  config:
+    roots:
+      - path: ~/company-experts
+        trust: user
 ```
 
-存量迁移口径：
-
-- **`wb-*` preset 不会被自动迁移**（设计决策 #5）。旧 preset 清理二选一：
-  - 让宿主执行 `agentPresets.remove('wb-<id>')`；
-  - 或直接删目录：`rm -rf ~/.dsh/.agent-presets/wb-<id>/`。
-- **不删也无害**——它们只是没有更新源，不再收到任何维护。
-- 想继续用某位专家？在新市场页重新**安装**（导出）一次即可，之后走本插件的安装/更新/卸载链路。
-- 旧版"召唤"（`workbuddy_experts` / `summon_workbuddy_expert` 两工具）**不设继任**——设计上以软切换取代：`/expert <name>` 任意时刻切换、保留会话历史。
+平时靠逐文件指纹自动重扫，「刷新」按钮强制重扫。
 
 ## 开发
 
@@ -115,8 +121,18 @@ node scripts/smoke-importer.mjs   # importer/市场路由
 node scripts/smoke-install.mjs    # 安装=导出链路
 ```
 
-改完 host（`src/`）或 `package.json` 需重启 `dsh web`；只改 `client/client.js` 刷新页面即可。设计与决策记录见 [docs/design.md](docs/design.md)。
+改完 host（`src/`）或 `package.json` 需重启 `dsh web`；只改 `client/client.js` 刷新页面即可。
 
-## License
+| 模块 | 职责 |
+|---|---|
+| `src/registry.js` | 专家文件夹扫描、校验、清洗、watcher |
+| `src/compose.js` | 会话组装：角色段 + skills + 工具白名单 |
+| `src/switch.js` | 切换事务 |
+| `src/importer/` | WorkBuddy scanner/指纹/导出/市场路由 |
+| `client/client.js` | 选择器 + 市场页 UI |
 
-MIT
+设计与决策记录见 [docs/design.md](docs/design.md)。
+
+## 许可证
+
+[MIT](LICENSE) © 2026 dsh-workbuddy-expert contributors

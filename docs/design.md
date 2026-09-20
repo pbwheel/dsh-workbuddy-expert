@@ -9,7 +9,7 @@
 `dsh-workbuddy-expert` 是 DSH 里"专家"概念的**唯一载体**：专家是一个独立文件夹（角色描述 + skills + 可选脚本），可以
 
 1. **手写**放进发现根（项目级 / 用户级），或
-2. 从 **WorkBuddy 源目录安装导出**（市场页，P2 相）—— importer 把扫描卡落成同格式的文件夹副本。
+2. 从 **WorkBuddy 源目录安装导出**（市场页，P2 相）—— importer 把扫描卡落成同格式的文件夹副本。源目录（默认 `~/.workbuddy/plugins/marketplaces/experts/plugins`）由 WorkBuddy 桌面端维护：用户在 WorkBuddy 专家中心点击**召唤**后专家才落盘到本地，未召唤过任何专家则源目录为空/不存在（市场页相应为空列表，README 快速开始已提示该前置）。
 
 会话侧只有一种消费方式：**软切换**——同一会话保留全部历史，`/expert <name>` 整组替换角色描述与 skills，在下一个模型请求边界生效。**没有 preset 开场，没有召唤**。
 
