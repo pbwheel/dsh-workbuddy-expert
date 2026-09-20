@@ -32,9 +32,11 @@
  *   7. the market page (ticket 08): pure derivations (locale name chains,
  *      category labels/chips with unknown-key fallback, three-way
  *      stackable status × category filters crossed with zh/en search, card
- *      actions per install state, team grouping/fold rules) and a
+ *      actions per install state, team grouping/fold rules — kept green
+ *      while the team UI is display-hidden behind TEAM_UI_ENABLED) and a
  *      component machine over a scripted /api/state fixture — cards with
- *      the installed/updatable/broken overlay, collapsed team group,
+ *      the installed/updatable/broken overlay, flat grid while the team
+ *      UI is hidden,
  *      orphan + unmatched-broken sections, warnings fold, install confirm
  *      pair → cancel reverts / confirm POSTs {id} to /api/install and
  *      adopts the response's inline state, chip filter behavior, and zh
@@ -480,13 +482,14 @@ const MARKET_STATE = {
   const cardButtons = (card) => findAll(card,
     (n) => n.type === 'button' && n.props.className === 'wbx-btn').filter((b) => textOf(b) !== t('cancel'))
 
-  // Grid: solo card + corrupt card render; the team collapses behind its
-  // group header on the plain browse.
+  // Grid: with TEAM_UI_ENABLED=false every expert renders as a flat solo
+  // card — no collapsible group header, no team badge.
   let cards = cardNodes()
-  assert.deepEqual(cards.map((card) => card.props['data-installed'] === 'true'), [false, true],
-    'cards render with the installed flag; team members hidden behind the collapsed group')
-  assert.ok(findAll(page(), (n) => n.type === 'button' && n.props.className === 'wbx-group-head').length === 1,
-    'the team renders one collapsible group header')
+  assert.deepEqual(cards.map((card) => card.props['data-installed'] === 'true'), [false, true, true, true],
+    'cards render with the installed flag; team members shown flat while the team UI is hidden')
+  assert.ok(findAll(page(), (n) => n.type === 'button' && n.props.className === 'wbx-group-head').length === 0,
+    'no collapsible group header while the team UI is hidden')
+  assert.ok(!chipByText(t('filterTeam')), 'the team filter chip is hidden from the toolbar')
 
   // corrupt-one merged the broken flag: ⚠ mark + uninstall-only actions.
   const corrupt = cards.find((card) => findAll(card, (n) => n.type === 'span' && n.props.className === 'wbx-id')[0].children[0] === 'corrupt-one')
@@ -543,16 +546,16 @@ const MARKET_STATE = {
   view.rerender()
   assert.deepEqual(cardNodes().map((card) => findAll(card, (n) => n?.props?.className === 'wbx-id')[0].children[0]),
     ['solo-a', 'team-1', 'team-2', 'corrupt-one'],
-    'the installed chip filters the grid; the active filter expands the team in place')
+    'the installed chip filters the grid (team members stay flat)')
   const dataChip = chipByText(mod.categoryLabelOf('04-DataAI', 'zh'))
   dataChip.props.onClick()
   view.rerender()
   assert.deepEqual(cardNodes().map((card) => findAll(card, (n) => n?.props?.className === 'wbx-id')[0].children[0]),
-    ['team-1', 'team-2'], 'status × category stacks; matched team members expand in place')
+    ['team-1', 'team-2'], 'status × category stacks')
   chipByText(t('filterAll')).props.onClick()
   chipByText(t('categoryAll')).props.onClick()
   view.rerender()
-  assert.equal(cardNodes().length, 2, 'resetting both chips restores the plain browse (team collapsed again)')
+  assert.equal(cardNodes().length, 4, 'resetting both chips restores the plain browse (all cards flat)')
 
   // Search: a zh query narrows the grid through the same lane.
   const search = findAll(page(), (n) => n.type === 'input' && n.props.className === 'wbx-search')[0]

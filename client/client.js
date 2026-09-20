@@ -1016,6 +1016,11 @@ function haystackOf (expert) {
     categoryHayshare(categoryOf(expert))].join(' ').toLowerCase()
 }
 
+// TEMP: the team feature is not fully tested yet — hide every team-related
+// piece of the market page (filter chip, card badge, group view) until it is.
+// Flip to true to bring the display back; all logic below stays intact.
+var TEAM_UI_ENABLED = false
+
 /**
  * The five filter-chip states in toolbar order. Each `keep` predicate IS
  * the chip's tolerant contract: absent state fields never match.
@@ -1260,7 +1265,7 @@ function ExpertCard (props) {
     badges.push(el('span', { key: 'skills', className: 'wbx-badge', 'data-kind': 'skills' },
       t('skillsBadge', { n: expert.skills.length })))
   }
-  if (isTeam(expert)) {
+  if (TEAM_UI_ENABLED && isTeam(expert)) {
     badges.push(el('span', { key: 'team', className: 'wbx-badge', 'data-kind': 'team' },
       t('teamBadge', { n: expert.teamSize })))
   }
@@ -1879,8 +1884,8 @@ function MarketPage (props) {
     var groups = groupCardsByPlugin(filtered)
     for (var gi = 0; gi < groups.length; gi++) {
       var group = groups[gi]
-      if (!group.team) {
-        items.push(cardOf(group.members[0]))
+      if (!TEAM_UI_ENABLED || !group.team) {
+        for (var si = 0; si < group.members.length; si++) items.push(cardOf(group.members[si]))
         continue
       }
       var expanded = groupExpanded(openGroups, group.pluginDir, filteredActive)
@@ -1959,7 +1964,9 @@ function MarketPage (props) {
       onChange: function (event) { setQuery(event.target.value) }
     }),
     el('div', { className: 'wbx-toolbar' },
-      FILTERS.map(function (chip) {
+      FILTERS.filter(function (chip) {
+        return TEAM_UI_ENABLED || chip.id !== 'team'
+      }).map(function (chip) {
         var active = filter === chip.id
         return el('button', {
           key: chip.id,
