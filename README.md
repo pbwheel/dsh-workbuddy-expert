@@ -77,7 +77,7 @@
 ### 安装插件
 
 ```sh
-git clone <本仓库地址>
+git clone https://github.com/pbwheel/dsh-workbuddy-expert.git
 cd dsh-workbuddy-expert
 dsh plugin --profile web add .
 dsh --profile web --dump-config
@@ -90,7 +90,7 @@ dsh --profile web --dump-config
 把下面这段话发给任意能够执行本机终端命令的 Agent：
 
 ```text
-请将 DSH 插件 dsh-workbuddy-expert 从本仓库安装到 web profile：git clone <仓库地址> 后执行 dsh plugin --profile web add <目录>。安装后执行 dsh --profile web --dump-config，确认配置包含 dsh-workbuddy-expert，并告诉我如何重启 DSH Web 和开始使用。
+请将 DSH 插件 dsh-workbuddy-expert 从本仓库安装到 web profile：git clone https://github.com/pbwheel/dsh-workbuddy-expert.git 后执行 dsh plugin --profile web add <目录>。安装后执行 dsh --profile web --dump-config，确认配置包含 dsh-workbuddy-expert，并告诉我如何重启 DSH Web 和开始使用。
 ```
 
 ### 三步用上 WorkBuddy 专家

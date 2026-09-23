@@ -79,7 +79,7 @@ Prerequisites:
 ### Install the plugin
 
 ```sh
-git clone <this repo>
+git clone https://github.com/pbwheel/dsh-workbuddy-expert.git
 cd dsh-workbuddy-expert
 dsh plugin --profile web add .
 dsh --profile web --dump-config
@@ -92,7 +92,7 @@ dsh --profile web --dump-config
 Send this prompt to any agent that can run terminal commands on your machine:
 
 ```text
-Install the DSH plugin dsh-workbuddy-expert from this repository into my web profile: git clone <repo URL>, then run dsh plugin --profile web add <directory>. After installation, run dsh --profile web --dump-config, confirm the configuration includes dsh-workbuddy-expert, and explain how to restart DSH Web and start using it.
+Install the DSH plugin dsh-workbuddy-expert from this repository into my web profile: git clone https://github.com/pbwheel/dsh-workbuddy-expert.git, then run dsh plugin --profile web add <directory>. After installation, run dsh --profile web --dump-config, confirm the configuration includes dsh-workbuddy-expert, and explain how to restart DSH Web and start using it.
 ```
 
 ### Use a WorkBuddy expert in three steps
