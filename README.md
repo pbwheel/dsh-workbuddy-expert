@@ -25,11 +25,20 @@
 - **会话选择器**——输入框旁的专家胶囊，随时切换当前会话的专家：整组替换角色描述与 skills，**保留全部会话历史**，在下一个模型请求边界生效，不打断进行中的轮次；
 - **完整专家体验**——安装的专家自带角色描述、专属 skills 与头像，选择器列表即选即用。
 
+## 专家来源
+
+插件**不联网下载专家**——市场页读取的是 WorkBuddy 桌面端落盘的**本地**专家目录（默认 `~/.workbuddy/plugins/marketplaces/experts/plugins`）。专家必须先在 WorkBuddy 的**专家中心**点击**召唤**，WorkBuddy 才会把该专家下载落盘到这个目录，之后本插件才能扫描到它：
+
+<!-- WorkBuddy「召唤」按钮截图（占位）：真图拍摄后同名覆盖 docs/images/workbuddy-summon.jpg -->
+![WorkBuddy 专家中心「召唤」按钮（占位图）](docs/images/workbuddy-summon.jpg)
+
+一个专家都没召唤过的话，本地目录为空，本插件的市场页相应是空列表——回 WorkBuddy 专家中心召唤几个，目录就位后市场页会自动出现卡片。
+
 ## 功能
 
 ### 1. WorkBuddy 专家市场（设置 → WorkBuddy 专家）
 
-![专家市场（占位图）](docs/images/market.png)
+![专家市场（占位图）](docs/images/market.jpg)
 
 - **只读扫描**本地 WorkBuddy 专家目录（默认 `~/.workbuddy/plugins/marketplaces/experts/plugins`），绝不写它，零数据外发；
 - 卡片浏览/搜索/分类；操作按钮收在卡片右上角，hover/聚焦卡片时浮现（未装 → 安装，已装 → 卸载/更新）；
@@ -38,7 +47,7 @@
 
 ### 2. 会话选择器
 
-![会话选择器（占位图）](docs/images/picker.png)
+![会话选择器（占位图）](docs/images/picker.jpg)
 
 - 输入框旁的专家胶囊展开带头像的专家列表，选中即切换当前会话的专家；
 - **切换保留全部会话历史**：角色描述与 skills 整组替换，在下一个模型请求边界生效；轮次进行中则排队到边界后应用，不打断流式输出；
@@ -49,7 +58,7 @@
 
 ### 3. 专家能力随会话生效
 
-![切换后会话轨迹（占位图）](docs/images/switch-trace.png)
+![切换后会话轨迹（占位图）](docs/images/switch-trace.jpg)
 
 选中专家后，其能力即挂载到当前会话：
 

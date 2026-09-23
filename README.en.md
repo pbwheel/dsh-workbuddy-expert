@@ -25,11 +25,20 @@ A DSH web plugin that brings the experts from the [WorkBuddy](https://www.workbu
 - **Session selector** — the expert capsule next to the composer switches the current session's expert anytime: the role section and skills are swapped as one group, **the full session history is kept**, and the change takes effect at the next model-request boundary without interrupting an in-flight turn;
 - **A complete expert experience** — installed experts carry their role description, dedicated skills, and avatar; the selector list is ready to use right away.
 
+## Expert source
+
+The plugin **does not download experts from the network** — the market page reads a **local** expert directory that the WorkBuddy desktop app maintains (default `~/.workbuddy/plugins/marketplaces/experts/plugins`). An expert lands there only after you click **Summon** on it in the WorkBuddy **Expert Center**; only then can this plugin scan it:
+
+<!-- WorkBuddy "Summon" button screenshot (placeholder). Replace docs/images/workbuddy-summon.jpg with a real one, same filename. -->
+![WorkBuddy Expert Center "Summon" button (placeholder)](docs/images/workbuddy-summon.jpg)
+
+If you have never summoned any expert, that directory is empty and the market page shows an empty list — summon a few in the WorkBuddy Expert Center, and cards appear automatically once the directory is populated.
+
 ## Features
 
 ### 1. WorkBuddy expert market (Settings → WorkBuddy Experts)
 
-![Expert market (placeholder)](docs/images/market.png)
+![Expert market (placeholder)](docs/images/market.jpg)
 
 - **Read-only scan** of your local WorkBuddy expert directory (default `~/.workbuddy/plugins/marketplaces/experts/plugins`) — never written to, zero data egress;
 - Card browse/search/categories; action buttons live on the card's top-right corner and appear on hover/focus (not installed → Install; installed → Uninstall/Update);
@@ -39,7 +48,7 @@ A DSH web plugin that brings the experts from the [WorkBuddy](https://www.workbu
 
 ### 2. Session selector (with avatars)
 
-![Session selector (placeholder)](docs/images/picker.png)
+![Session selector (placeholder)](docs/images/picker.jpg)
 
 - The expert capsule next to the composer expands into an avatar-carrying expert list; picking one switches the current session's expert;
 - Avatars are exported at install time (`avatar.png`, fetched on demand via `/api/expert-avatar`); no avatar falls back to an emoji;
@@ -51,7 +60,7 @@ A DSH web plugin that brings the experts from the [WorkBuddy](https://www.workbu
 
 ### 3. Expert capabilities ride the session
 
-![Session trace after switch (placeholder)](docs/images/switch-trace.png)
+![Session trace after switch (placeholder)](docs/images/switch-trace.jpg)
 
 Once an expert is selected, its capabilities mount onto the current session:
 
