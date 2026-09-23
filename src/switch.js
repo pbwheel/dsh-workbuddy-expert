@@ -12,29 +12,24 @@
  *      an error text listing the experts, never a silent no-op;
  *   3. dispose the current composition in reverse order;
  *   4. re-stamp the target folder's generation (mtime+size) BEFORE compose;
- *   5. append the `expert/selected` session event BEFORE the composition
- *      commit (aligning the agent-presets precedent — the recorded event is
- *      what later turns/replays reconstruct the composition from);
- *   6. compose the next expert inside the agent's scoped context;
- *   7. agent.inject() the switch notice so it lands in the next admitted
+ *   5. compose the next expert inside the agent's scoped context;
+ *   6. agent.inject() the switch notice so it lands in the next admitted
  *      request (defensive: a missing/throwing inject degrades to a warning).
  *
- * The `expert/selected` append uses the Session.append contract verified in
- * the harness source (dsh-agent-presets: `agent.session.append(type, data)`
- * with JSON data; the event-type table is merge-extensible and the runtime
- * validates only the payload's JSON-serializability). Any append failure
- * degrades to ONE warning + a TODO marker (design DEVIATIONS note).
+ * NOTHING is appended to the session's durable log: the harness persistence
+ * read path fail-closes on event types outside its generated vocabulary
+ * unless the envelope carries `ignorable: true`, Session.append() offers no
+ * way to set that marker, and event-name registration was deliberately
+ * rejected upstream — so a plugin-owned `expert/selected`/`expert/cleared`
+ * event (as written by earlier versions) makes the session permanently
+ * unresumable. Selection state therefore lives in the in-memory `states`
+ * map only; surviving a host restart needs a harness-side ignorable-event
+ * writer or plugin-owned sidecar storage (deferred, see DEVIATIONS).
  */
 
 import { randomUUID } from 'node:crypto'
 
 import { compose } from './compose.js'
-
-/** Session event type recorded on every selection/switch (design §6). */
-export const EXPERT_SELECTED_EVENT = 'expert/selected'
-
-/** Session event type recorded when the expert role is removed (symmetric). */
-export const EXPERT_CLEARED_EVENT = 'expert/cleared'
 
 /** Render thrown values as one line. */
 function messageOf(error) {
@@ -84,18 +79,6 @@ export function createSwitcher({ registry, logger = {} }) {
     return tail
   }
 
-  /** Append the expert/selected event before the composition commit. */
-  function recordSelection(agent, nextId, previousId) {
-    try {
-      agent.session.append(EXPERT_SELECTED_EVENT, { expert: nextId, previous: previousId ?? null })
-    } catch (error) {
-      // TODO(ticket 05): register a real `expertState` session projection via
-      // ctx.sessionProjections so stateOf() reads the durable fold, not this
-      // in-memory map. Event append failed here — degrade to one warning.
-      warn(`dsh-workbuddy-expert: appending ${EXPERT_SELECTED_EVENT} failed (${messageOf(error)}) — the switch still committed; the durable log misses this selection record`)
-    }
-  }
-
   /** Never interrupt streaming: chain after the running turn when possible. */
   async function waitForTurnBoundary(agent) {
     if (agent !== null && typeof agent === 'object' && agent.status !== undefined && agent.status !== 'idle'
@@ -140,9 +123,6 @@ export function createSwitcher({ registry, logger = {} }) {
       states.delete(sessionId)
     }
 
-    // Event BEFORE the composition commit (agent-presets precedent).
-    recordSelection(agent, card.id, current?.id)
-
     let composition
     try {
       composition = await compose(agent, card, { warn })
@@ -179,14 +159,6 @@ export function createSwitcher({ registry, logger = {} }) {
     }
     states.delete(sessionId)
 
-    // The removal record — symmetric to expert/selected so the durable log
-    // stays replayable (a later selection's `previous` reads null again).
-    try {
-      agent.session.append(EXPERT_CLEARED_EVENT, { previous: current.id })
-    } catch (error) {
-      warn(`dsh-workbuddy-expert: appending ${EXPERT_CLEARED_EVENT} failed (${messageOf(error)}) — the clear still committed; the durable log misses this removal record`)
-    }
-
     try {
       agent.inject?.(injectMessage(`已移除专家 ${current.id}。会话恢复默认 agent 行为，会话历史全部保留。`))
     } catch (error) {
@@ -207,9 +179,8 @@ export function createSwitcher({ registry, logger = {} }) {
     /**
      * Serialized clear transaction for one session: dispose the current
      * expert composition and return the session to the default agent.
-     * Mirrors runSwitch's ordering rules (turn boundary, event, notice) —
-     * the `expert/cleared` event keeps the durable log symmetric so a
-     * future replay sees the removal, not just selections.
+     * Mirrors runSwitch's ordering rules (turn boundary, then notice) —
+     * like a switch, it appends nothing to the durable log.
      */
     clear(agent) {
       const sessionId = agent?.id

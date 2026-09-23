@@ -62,8 +62,10 @@ export function apply(ctx, config = {}) {
   const registry = createRegistry({ roots })
 
   // Soft-switch transaction manager (ticket 03): serialized per session,
-  // `expert/selected` events, agent-scope compositions. The session-creation
-  // helper (composeForCreation) is exposed on the service for ticket 05's UI.
+  // agent-scope compositions, in-memory selection state (nothing is appended
+  // to the durable session log — the harness fail-closes on unknown plugin
+  // event types, see src/switch.js). The session-creation helper
+  // (composeForCreation) is exposed on the service for ticket 05's UI.
   const switcher = createSwitcher({ registry, logger: { warn } })
 
   // Watcher: root add/remove reflects without restart (invalidates the cache;

@@ -29,7 +29,8 @@
  *     staged, the client fires POST /api/after-create {sessionId,
  *     expertId} EXACTLY ONCE (a ref guards the "once") — the host side
  *     runs switcher.composeForCreation on the just-created agent, which
- *     composes the expert and appends the expert/selected event. There is
+ *     composes the expert (in-memory selection state; nothing is appended
+ *     to the durable session log). There is
  *     therefore never a "已选未生效" state: the draft either lands through
  *     this handshake or dies with the un-created session.
  *
@@ -731,9 +732,9 @@ function caretChevron () {
  *   no session   → pick = STAGED DRAFT held in state; the effect watching
  *                  sessionId fires POST /api/after-create ONCE (a ref
  *                  guards re-entry) the moment a session id appears, then
- *                  clears the draft — the host composes the expert and
- *                  appends expert/selected on the just-created agent, so
- *                  no "已选未生效" window ever exists.
+ *                  clears the draft — the host composes the expert on the
+ *                  just-created agent (in-memory state, no durable event),
+ *                  so no "已选未生效" window ever exists.
  *
  * Optional `initialData` seam (undefined in production) lets the offline
  * smoke render real states without a fetch layer.
@@ -791,8 +792,8 @@ function ExpertSelector (props) {
   // The staged-draft handshake (design §3): a draft staged in the
   // no-session state fires /api/after-create EXACTLY ONCE when a session
   // id appears on the seat. Failures surface as an error notice and the
-  // draft is consumed either way — the host owns the compose + the
-  // expert/selected event once the POST is accepted.
+  // draft is consumed either way — the host owns the compose once the
+  // POST is accepted (selection state stays host-side, in memory).
   React.useEffect(function () {
     if (staged === null || sessionId === '') return undefined
     if (firedAfterCreateRef.current === staged.expertId) return undefined

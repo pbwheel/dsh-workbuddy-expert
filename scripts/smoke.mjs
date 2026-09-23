@@ -34,12 +34,14 @@
  *      warning, dispose runs everything in reverse order;
  *   9. switch transaction serialization: two concurrent switches over one
  *      session are applied strictly in order; a busy (running) agent's
- *      transaction waits for whenIdle() before touching anything;
+ *      transaction waits for whenIdle() before composing anything;
  *  10. switch and switch back: the previous composition is fully disposed
- *      (reverse), the new one registered, `expert/selected` events are
- *      appended BEFORE the composition commit, the switch notice is injected;
- *  10b. clear transaction: dispose + default agent, `expert/cleared` event
- *      with the previous id, notice injected, idempotent with no selection;
+ *      (reverse), the new one registered, the switch notice is injected,
+ *      and NOTHING is ever appended to the durable session log (the
+ *      harness fail-closes on unknown plugin event types — one appended
+ *      event makes the session unresumable on reload);
+ *  10b. clear transaction: dispose + default agent, notice injected,
+ *      idempotent with no selection, and no durable event either;
  *  11. an expert with an empty skills/ tree composes the role section only;
  *  12. generation stamping: the composition holds its startup role text and
  *      (mtime+size) stamp; on-disk edits surface only after the registry
@@ -359,7 +361,7 @@ async function until(description, fn, timeoutMs = 5_000) {
 
 const { renderExpertList, registerExpertCommand } = await import(join(root, 'src', 'command.js'))
 const { compose, ROLE_SECTION_NAME, ROLE_SECTION_ORDER, stampExpertDir } = await import(join(root, 'src', 'compose.js'))
-const { createSwitcher, EXPERT_SELECTED_EVENT, EXPERT_CLEARED_EVENT } = await import(join(root, 'src', 'switch.js'))
+const { createSwitcher } = await import(join(root, 'src', 'switch.js'))
 
 /** A fake agent: agent-scoped ctx with systemPrompt/skills (+ optional tools) + session/inject records. */
 function makeFakeAgent(sessionId, toolsService) {
@@ -626,11 +628,10 @@ assert.equal(plugin.name, 'dsh-workbuddy-expert')
   const first = switcher.switch(agent, 'video-editor')
   const second = switcher.switch(agent, 'shared')
   await Promise.all([first, second])
-  // Serialized: the two scans (first transaction only; the second reuses the
-  // cached table) plus the two event appends never interleave.
+  // Serialized: the first transaction's scan (the second reuses the cached
+  // table) runs to completion before the second transaction's body starts.
   assert.deepEqual(orderLog, ['scan-start', 'scan-end'], 'the second transaction reuses the cached scan')
-  assert.deepEqual(agent.events.map((event) => event.data.expert), ['video-editor', 'shared'],
-    'the two concurrent switches were applied strictly in order')
+  assert.equal(agent.events.length, 0, 'concurrent switches append no durable session events')
   assert.equal(switcher.stateOf('serial-session').id, 'shared', 'the last switch wins')
   assert.ok(agent.sections.has(ROLE_SECTION_NAME) && agent.registeredSkills.size === 0,
     'the final composition (shared: role only) is in place')
@@ -644,17 +645,24 @@ assert.equal(plugin.name, 'dsh-workbuddy-expert')
     idleResolved = true
     busyAgent.status = 'idle'
   }
+  let idleAtFirstCompose
+  const realSectionSet = busyAgent.sections.set.bind(busyAgent.sections)
+  busyAgent.sections.set = (name, section) => {
+    idleAtFirstCompose ??= idleResolved
+    return realSectionSet(name, section)
+  }
   const result = await switcher.switch(busyAgent, 'video-editor')
   assert.equal(result.kind, 'success')
   assert.ok(idleResolved, 'whenIdle() resolved before the transaction applied')
-  assert.ok(busyAgent.events.every((event) => idleResolved), 'every event landed after the turn boundary')
+  assert.strictEqual(idleAtFirstCompose, true, 'the composition registered only after the turn boundary')
   assert.equal(switcher.stateOf('busy-session').id, 'video-editor')
 
   // Switching to the SAME expert is an idempotent no-op success.
+  const injectionsBeforeAgain = busyAgent.injections.length
   const again = await switcher.switch(busyAgent, 'video-editor')
   assert.equal(again.kind, 'success')
   assert.ok(again.text.includes('无需切换'))
-  assert.equal(busyAgent.events.length, 1, 'an idempotent switch records no new event')
+  assert.equal(busyAgent.injections.length, injectionsBeforeAgain, 'an idempotent switch injects no new notice')
 
   // Unknown/broken ids answer with an error listing the experts.
   const missing = await switcher.switch(agent, 'no-such-expert')
@@ -666,7 +674,7 @@ assert.equal(plugin.name, 'dsh-workbuddy-expert')
   assert.equal(switcher.stateOf('serial-session').id, 'shared', 'a failed switch leaves the current composition intact')
 }
 
-// ── 10. switch → switch back: dispose correctness + event-before-commit ─────
+// ── 10. switch → switch back: dispose correctness + durable log untouched ───
 
 {
   const registry = createRegistry({ roots, scan: scanDiscoveryRoots, ttlMs: 600_000 })
@@ -678,8 +686,7 @@ assert.equal(plugin.name, 'dsh-workbuddy-expert')
   const composedSection = agent.sections.get(ROLE_SECTION_NAME)
   assert.ok(composedSection.text.includes('你是视频剪辑专家'))
   assert.deepEqual([...agent.registeredSkills.keys()], ['cut-video'])
-  assert.deepEqual(agent.events, [{ type: EXPERT_SELECTED_EVENT, data: { expert: 'video-editor', previous: null } }],
-    'the first selection is recorded with previous: null')
+  assert.equal(agent.events.length, 0, 'a selection is never appended to the durable session log')
 
   const injectionsBefore = agent.injections.length
   const second = await switcher.switch(agent, 'shared')
@@ -687,7 +694,6 @@ assert.equal(plugin.name, 'dsh-workbuddy-expert')
   assert.ok(agent.registeredSkills.size === 0, 'switching away disposed the expert skills')
   assert.ok(!agent.sections.get(ROLE_SECTION_NAME).text.includes('你是视频剪辑专家'),
     'the role section was replaced by the new expert body')
-  assert.equal(agent.events.at(-1).data.previous, 'video-editor', 'the switch event names the previous expert')
   assert.equal(agent.injections.length, injectionsBefore + 1, 'the switch notice was injected once')
   assert.ok(agent.injections.at(-1).content[0].text.includes('已从专家 video-editor 切换为'),
     'the notice states the from→to switch')
@@ -697,23 +703,23 @@ assert.equal(plugin.name, 'dsh-workbuddy-expert')
   assert.equal(back.kind, 'success')
   assert.deepEqual([...agent.registeredSkills.keys()], ['cut-video'], 'switching back re-registers the skills')
   assert.ok(agent.sections.get(ROLE_SECTION_NAME).text.includes('你是视频剪辑专家'))
-  assert.equal(agent.events.length, 3)
+  assert.equal(agent.events.length, 0, 'three switches later the durable session log is still untouched')
 
-  // Event-before-commit: the append happens while the OLD composition is
-  // already disposed but the NEW one is not yet in place (observable here as
-  // every event preceding its composition's section update — guaranteed by
-  // the serialized body's internal order; asserted via the append hook).
+  // The anti-poisoning invariant, asserted at the seam itself: the harness
+  // persistence read path fail-closes on event types outside its generated
+  // vocabulary unless the envelope carries ignorable:true, Session.append()
+  // cannot set that marker, so the switch path must never call append at all.
   const orderAgent = makeFakeAgent('order-session')
-  const seenAtAppend = []
+  const appendCalls = []
   orderAgent.session.append = (type, data) => {
-    seenAtAppend.push([...orderAgent.registeredSkills.keys()])
+    appendCalls.push({ type, data })
     return { type, data }
   }
   await switcher.switch(orderAgent, 'video-editor')
-  assert.deepEqual(seenAtAppend, [[]], 'at event-append time the new composition is not yet registered')
+  assert.deepEqual(appendCalls, [], 'the switch transaction never touches the durable session log')
 }
 
-// ── 10b. clear: dispose + default agent + expert/cleared event ─────────────
+// ── 10b. clear: dispose + default agent, durable log untouched ──────────────
 
 {
   const registry = createRegistry({ roots, scan: scanDiscoveryRoots, ttlMs: 600_000 })
@@ -735,15 +741,13 @@ assert.equal(plugin.name, 'dsh-workbuddy-expert')
   assert.equal(switcher.stateOf('clear-session'), undefined, 'clear deletes the in-memory state')
   assert.ok(!agent.sections.has(ROLE_SECTION_NAME) && agent.registeredSkills.size === 0,
     'clear disposed the whole composition (role section + skills)')
-  assert.deepEqual(agent.events.at(-1), { type: EXPERT_CLEARED_EVENT, data: { previous: 'video-editor' } },
-    'the removal is recorded as expert/cleared with the previous id')
+  assert.equal(agent.events.length, 0, 'the clear appends nothing to the durable session log')
   assert.ok(agent.injections.at(-1).content[0].text.includes('已移除专家 video-editor'),
     'the clear notice was injected')
 
-  // A selection AFTER a clear reads previous: null again (log symmetry).
+  // A selection AFTER a clear composes fresh (the in-memory state reads empty).
   await switcher.switch(agent, 'shared')
-  assert.deepEqual(agent.events.at(-1).data, { expert: 'shared', previous: null },
-    'a post-clear selection records previous: null')
+  assert.equal(switcher.stateOf('clear-session').id, 'shared', 'a post-clear selection composes fresh')
 
   // Missing agent context answers a clean error.
   const noAgent = await switcher.clear(undefined)
@@ -767,7 +771,7 @@ assert.equal(plugin.name, 'dsh-workbuddy-expert')
   const created = await switcher.composeForCreation(creationAgent, 'shared')
   assert.equal(created.kind, 'success')
   assert.equal(switcher.stateOf('creation-session').id, 'shared')
-  assert.deepEqual(creationAgent.events.at(-1).data, { expert: 'shared', previous: null })
+  assert.equal(creationAgent.events.length, 0, 'the creation compose appends no durable event')
 }
 
 // ── 12. generation stamping: running compositions keep their startup text ──
