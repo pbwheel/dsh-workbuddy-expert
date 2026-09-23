@@ -110,6 +110,14 @@ var CSS = `
 .wbe-item-reason { font-size: 11px; line-height: 16px; color: var(--dsw-alias-state-warn-primary, #c77700); }
 .wbe-current-mark { flex: none; font-size: 11px; color: var(--dsw-alias-state-success-primary, #2e9e5b); }
 .wbe-empty { padding: 8px 10px; font-size: 13px; color: var(--dsw-alias-label-secondary, inherit); }
+/* The removal lane — project-wide danger convention (10% red tint on hover). */
+.wbe-remove { display: flex; align-items: center; gap: 6px; width: 100%; padding: 7px 10px; font-size: 12px;
+  line-height: 1.4; text-align: left; cursor: pointer; background: none;
+  color: var(--dsw-alias-state-error-primary, #d5484f);
+  border: 0; border-top: 1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.2)); }
+.wbe-remove:hover:not(:disabled) { background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #d5484f) 10%, transparent); }
+.wbe-remove:disabled { opacity: .5; cursor: default; }
+.wbe-remove:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, currentColor); outline-offset: -2px; }
 .wbe-foot { margin-top: 4px; padding: 7px 10px 5px; font-size: 11px; line-height: 1.5;
   color: var(--dsw-alias-label-tertiary, inherit);
   border-top: 1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.2)); }
@@ -412,6 +420,12 @@ var DICTS = {
     retry: '重试',
     switchFailed: '切换失败',
     afterCreateFailed: '创建后组装专家失败',
+    removeExpert: '移除专家，恢复默认',
+    removeExpertTitle: '移除当前专家，恢复默认 agent（会话历史保留）',
+    clearing: '正在移除专家…',
+    clearFailed: '移除专家失败',
+    cancelStaged: '取消暂存的选择',
+    cancelStagedTitle: '放弃创建后才生效的专家选择',
     footSession: '选择即在下一个模型请求边界切换，会话历史保留',
     footDraft: '会话创建后立即应用所选专家',
     // ── ticket 08: the market settings page (shared dict, merged keys; the
@@ -500,6 +514,12 @@ var DICTS = {
     retry: 'Retry',
     switchFailed: 'Switch failed',
     afterCreateFailed: 'Composing the expert after creation failed',
+    removeExpert: 'Remove expert, back to default',
+    removeExpertTitle: 'Remove the current expert and return to the default agent (history is kept)',
+    clearing: 'Removing expert…',
+    clearFailed: 'Remove failed',
+    cancelStaged: 'Cancel staged pick',
+    cancelStagedTitle: 'Drop the pick that would apply after creation',
     footSession: 'Picking switches at the next model request boundary; history is kept',
     footDraft: 'The pick is applied the moment the session is created',
     nav: 'WorkBuddy Experts',
@@ -684,6 +704,7 @@ function pointerInsideSelectorUi (target) {
   return target.closest('.wbe-menu') !== null || target.closest('.wbe-wrap') !== null
 }
 
+
 // ── the selector control ─────────────────────────────────────────────────────
 
 /**
@@ -821,23 +842,50 @@ function ExpertSelector (props) {
     }
   }
 
+  /** Remove: live session → clear transaction; staged draft → drop it. */
+  var removeCurrent = function () {
+    setOpen(false)
+    if (staged !== null) {
+      setStaged(null)
+      return
+    }
+    if (sessionId === '' || currentExpertId === '') return
+    setSwitching({ clear: true })
+    postJson(API_BASE + '/clear', { sessionId: sessionId })
+      .then(function (result) {
+        if (result !== null && typeof result === 'object' && result.kind === 'error') {
+          setError(t('clearFailed') + '：' + (result.text || ''))
+        }
+        return pull()
+      }, function (err) {
+        setError(t('clearFailed') + '：' + (err && err.message ? err.message : String(err)))
+        return pull()
+      })
+      .then(function () { setSwitching(null) })
+  }
+
   // The button's face: the switching target while a transaction runs
   // (disabled), the staged pick while no session exists, otherwise the
   // current expert's name (or the bare 专家 label when none). The face
   // expert rides the same resolution so the button shows the avatar
-  // beside the name whenever a concrete expert occupies the seat.
+  // beside the name whenever a concrete expert occupies the seat. A clear
+  // transaction keeps the CURRENT expert's face with a removing label.
   var busy = switching !== null
+  var clearing = busy && switching.clear === true
   var faceExpert = null
   var faceName = ''
-  if (busy) faceExpert = byId[switching.expertId]
+  if (clearing) faceExpert = byId[currentExpertId]
+  else if (busy) faceExpert = byId[switching.expertId]
   else if (staged !== null) faceExpert = byId[staged.expertId]
   else if (currentExpertId !== '') faceExpert = byId[currentExpertId]
-  if (busy) faceName = nameOf(byId[switching.expertId]) || switching.expertId
+  if (clearing) faceName = nameOf(byId[currentExpertId]) || currentExpertId
+  else if (busy) faceName = nameOf(byId[switching.expertId]) || switching.expertId
   else if (staged !== null) faceName = nameOf(byId[staged.expertId]) || staged.expertId
   else if (currentExpertId !== '') faceName = nameOf(byId[currentExpertId]) || currentExpertId
 
   var buttonLabel = t('buttonLabel')
-  if (busy) buttonLabel = t('switchingTo', { name: faceName })
+  if (clearing) buttonLabel = t('clearing')
+  else if (busy) buttonLabel = t('switchingTo', { name: faceName })
   else if (staged !== null) buttonLabel = t('stagedAs', { name: faceName })
   else if (faceName !== '') buttonLabel = faceName
 
@@ -879,6 +927,20 @@ function ExpertSelector (props) {
       experts !== null && items.length === 0
         ? el('div', { className: 'wbe-empty' }, t('emptyMenu'))
         : items,
+      // The removal lane: a staged draft cancels locally; a live selection
+      // POSTs the clear transaction (dispose + default agent). Rendered
+      // only when something is actually selected.
+      staged !== null
+        ? el('button', {
+            type: 'button', className: 'wbe-remove', onClick: removeCurrent,
+            title: t('cancelStagedTitle')
+          }, '✕ ', t('cancelStaged'))
+        : sessionId !== '' && currentExpertId !== ''
+          ? el('button', {
+              type: 'button', className: 'wbe-remove', disabled: busy,
+              onClick: removeCurrent, title: t('removeExpertTitle')
+            }, '✕ ', t('removeExpert'))
+          : null,
       el('div', { className: 'wbe-foot' }, t(sessionId !== '' ? 'footSession' : 'footDraft')))
   }
 

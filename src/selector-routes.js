@@ -33,7 +33,13 @@
  *                                       contract: the client stages the pick
  *                                       while no session exists, then fires
  *                                       this ONCE when the session id appears
- *                                       — see client/client.js).
+ *                                       — see client/client.js);
+ *   POST /dsh-workbuddy-expert/api/clear {sessionId}
+ *                                     → switcher.clear on the live agent:
+ *                                       dispose the current expert
+ *                                       composition, return to the default
+ *                                       agent (the selector's 移除专家
+ *                                       action's transport).
  *
  * Security baseline (ported from src/importer/routes.js): mutating routes
  * accept same-origin POSTs only (405/403 otherwise), JSON bodies are capped
@@ -97,6 +103,13 @@ function sessionIdParamOf(request) {
   }
 }
 
+/** Validate a `{sessionId}` body; returns the sessionId verbatim. */
+function requireSession(body) {
+  if (body === null || typeof body !== 'object') throw new Error('body must be a JSON object')
+  if (typeof body.sessionId !== 'string' || body.sessionId.trim() === '') throw new Error('missing sessionId')
+  return body.sessionId
+}
+
 /** Validate a `{sessionId, expertId}` body; returns both verbatim. */
 function requireSessionAndExpert(body) {
   if (body === null || typeof body !== 'object') throw new Error('body must be a JSON object')
@@ -114,6 +127,7 @@ function requireSessionAndExpert(body) {
  * @param {{list: () => Promise<{experts: object[], warnings: string[]}>}} deps.registry
  * @param {{
  *   switch: (agent: object, expertId: string) => Promise<{kind: string, text: string}>,
+ *   clear: (agent: object) => Promise<{kind: string, text: string}>,
  *   stateOf: (sessionId: string) => {id: string} | undefined,
  *   composeForCreation: (agent: object, expertId: string) => Promise<{kind: string, text: string}>,
  * }} deps.switcher
@@ -222,6 +236,44 @@ export function mountSelectorRoutes(hostCtx, { registry, switcher, resolveAgent 
 
   mutating('switch', (agent, expertId) => switcher.switch(agent, expertId))
   mutating('after-create', (agent, expertId) => switcher.composeForCreation(agent, expertId))
+
+  // POST /api/clear {sessionId}: the remove-expert transport — same guards
+  // as the other mutating routes, but the body carries no expertId.
+  register({
+    kind: 'exact',
+    path: `${ROUTE_BASE}/api/clear`,
+    handler: async (request, response) => {
+      if (request.method !== 'POST') {
+        sendJson(response, 405, { error: 'method not allowed' })
+        return
+      }
+      if (!sameOrigin(request)) {
+        sendJson(response, 403, { error: 'same-origin required' })
+        return
+      }
+      try {
+        const sessionId = requireSession(await readJsonBody(request))
+        if (typeof resolveAgent !== 'function') {
+          sendJson(response, 200, {
+            kind: 'error',
+            text: 'experts: no agent resolver is wired on this host — /api/clear cannot reach the session.',
+          })
+          return
+        }
+        const agent = await resolveAgent(sessionId)
+        if (agent === undefined || agent === null) {
+          sendJson(response, 200, {
+            kind: 'error',
+            text: `experts: session ${sessionId} has no live agent on this host (cold sessions are not switchable; Remote cold-session query stays deferred, see DEVIATIONS).`,
+          })
+          return
+        }
+        sendJson(response, 200, await switcher.clear(agent))
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+    },
+  })
 
   return () => {
     for (const off of disposers) off()

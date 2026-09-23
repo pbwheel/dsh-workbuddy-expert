@@ -38,6 +38,8 @@
  *  10. switch and switch back: the previous composition is fully disposed
  *      (reverse), the new one registered, `expert/selected` events are
  *      appended BEFORE the composition commit, the switch notice is injected;
+ *  10b. clear transaction: dispose + default agent, `expert/cleared` event
+ *      with the previous id, notice injected, idempotent with no selection;
  *  11. an expert with an empty skills/ tree composes the role section only;
  *  12. generation stamping: the composition holds its startup role text and
  *      (mtime+size) stamp; on-disk edits surface only after the registry
@@ -357,7 +359,7 @@ async function until(description, fn, timeoutMs = 5_000) {
 
 const { renderExpertList, registerExpertCommand } = await import(join(root, 'src', 'command.js'))
 const { compose, ROLE_SECTION_NAME, ROLE_SECTION_ORDER, stampExpertDir } = await import(join(root, 'src', 'compose.js'))
-const { createSwitcher, EXPERT_SELECTED_EVENT } = await import(join(root, 'src', 'switch.js'))
+const { createSwitcher, EXPERT_SELECTED_EVENT, EXPERT_CLEARED_EVENT } = await import(join(root, 'src', 'switch.js'))
 
 /** A fake agent: agent-scoped ctx with systemPrompt/skills (+ optional tools) + session/inject records. */
 function makeFakeAgent(sessionId, toolsService) {
@@ -458,6 +460,15 @@ function makeFakeCommands() {
   // A broken id names the broken reason.
   const brokenTarget = await definition.handler({ rawInput: 'no-role', agent })
   assert.equal(brokenTarget.kind, 'error')
+  // /expert off removes the just-selected expert (dispose + default agent).
+  const offResult = await definition.handler({ rawInput: 'off', agent })
+  assert.equal(offResult.kind, 'success')
+  assert.ok(offResult.text.includes('已移除专家 video-editor'), '/expert off reports the removal')
+  assert.ok(!agent.sections.has(ROLE_SECTION_NAME), '/expert off disposed the role section')
+  // /expert off without an agent context answers a clean error.
+  const offNoAgent = await definition.handler({ rawInput: 'off' })
+  assert.equal(offNoAgent.kind, 'error')
+  assert.ok(offNoAgent.text.includes('agent'))
   assert.ok(brokenTarget.text.includes('role.md missing'), 'a broken id carries its broken reason')
   // No agent in the invocation: error, no crash.
   const noAgent = await definition.handler({ rawInput: 'video-editor' })
@@ -700,6 +711,44 @@ assert.equal(plugin.name, 'dsh-workbuddy-expert')
   }
   await switcher.switch(orderAgent, 'video-editor')
   assert.deepEqual(seenAtAppend, [[]], 'at event-append time the new composition is not yet registered')
+}
+
+// ── 10b. clear: dispose + default agent + expert/cleared event ─────────────
+
+{
+  const registry = createRegistry({ roots, scan: scanDiscoveryRoots, ttlMs: 600_000 })
+  const switcher = createSwitcher({ registry, logger: { warn: () => {} } })
+  const agent = makeFakeAgent('clear-session')
+
+  // Clearing with no selection is an idempotent success, no event.
+  const noop = await switcher.clear(agent)
+  assert.equal(noop.kind, 'success')
+  assert.ok(noop.text.includes('未绑定'))
+  assert.equal(agent.events.length, 0)
+
+  await switcher.switch(agent, 'video-editor')
+  assert.ok(agent.sections.has(ROLE_SECTION_NAME) && agent.registeredSkills.size === 1)
+
+  const cleared = await switcher.clear(agent)
+  assert.equal(cleared.kind, 'success')
+  assert.ok(cleared.text.includes('已移除专家 video-editor'))
+  assert.equal(switcher.stateOf('clear-session'), undefined, 'clear deletes the in-memory state')
+  assert.ok(!agent.sections.has(ROLE_SECTION_NAME) && agent.registeredSkills.size === 0,
+    'clear disposed the whole composition (role section + skills)')
+  assert.deepEqual(agent.events.at(-1), { type: EXPERT_CLEARED_EVENT, data: { previous: 'video-editor' } },
+    'the removal is recorded as expert/cleared with the previous id')
+  assert.ok(agent.injections.at(-1).content[0].text.includes('已移除专家 video-editor'),
+    'the clear notice was injected')
+
+  // A selection AFTER a clear reads previous: null again (log symmetry).
+  await switcher.switch(agent, 'shared')
+  assert.deepEqual(agent.events.at(-1).data, { expert: 'shared', previous: null },
+    'a post-clear selection records previous: null')
+
+  // Missing agent context answers a clean error.
+  const noAgent = await switcher.clear(undefined)
+  assert.equal(noAgent.kind, 'error')
+  assert.ok(noAgent.text.includes('agent'))
 }
 
 // ── 11. empty-skills expert: role section only ─────────────────────────────

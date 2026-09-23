@@ -82,6 +82,7 @@ export function apply(ctx, config = {}) {
     return ctx.reflect.provide('experts', {
       list: () => registry.list(),
       switch: (agent, expertId) => switcher.switch(agent, expertId),
+      clear: (agent) => switcher.clear(agent),
       stateOf: (sessionId) => switcher.stateOf(sessionId),
       composeForCreation: (agent, expertId) => switcher.composeForCreation(agent, expertId),
     })

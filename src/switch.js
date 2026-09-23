@@ -33,6 +33,9 @@ import { compose } from './compose.js'
 /** Session event type recorded on every selection/switch (design §6). */
 export const EXPERT_SELECTED_EVENT = 'expert/selected'
 
+/** Session event type recorded when the expert role is removed (symmetric). */
+export const EXPERT_CLEARED_EVENT = 'expert/cleared'
+
 /** Render thrown values as one line. */
 function messageOf(error) {
   try {
@@ -62,6 +65,7 @@ export function switchNotice(previousId, nextCard) {
  * @param {object} [options.logger] - { warn(message) }
  * @returns {{
  *   switch: (agent: object, nextId: string) => Promise<{kind: 'success'|'error', text: string}>,
+ *   clear: (agent: object) => Promise<{kind: 'success'|'error', text: string}>,
  *   stateOf: (sessionId: string) => {id: string, generation: Array} | undefined,
  *   composeForCreation: (agent: object, expertId: string) => Promise<{kind: 'success'|'error', text: string}>,
  * }}
@@ -158,12 +162,59 @@ export function createSwitcher({ registry, logger = {} }) {
     return { kind: 'success', text: `已切换为专家 ${card.id}（${card.displayName ?? card.id}）。角色与 skill 在下一个模型请求边界生效，会话历史保持不变。` }
   }
 
+  /** The clear transaction body (already serialized for this session). */
+  async function runClear(agent) {
+    await waitForTurnBoundary(agent)
+
+    const sessionId = agent?.id
+    const current = states.get(sessionId)
+    if (current === undefined) {
+      return { kind: 'success', text: '当前会话未绑定专家，无需移除。' }
+    }
+
+    try {
+      current.composition.dispose()
+    } catch (error) {
+      warn(`dsh-workbuddy-expert: disposing the composition during a clear threw (${messageOf(error)}) — continuing the clear`)
+    }
+    states.delete(sessionId)
+
+    // The removal record — symmetric to expert/selected so the durable log
+    // stays replayable (a later selection's `previous` reads null again).
+    try {
+      agent.session.append(EXPERT_CLEARED_EVENT, { previous: current.id })
+    } catch (error) {
+      warn(`dsh-workbuddy-expert: appending ${EXPERT_CLEARED_EVENT} failed (${messageOf(error)}) — the clear still committed; the durable log misses this removal record`)
+    }
+
+    try {
+      agent.inject?.(injectMessage(`已移除专家 ${current.id}。会话恢复默认 agent 行为，会话历史全部保留。`))
+    } catch (error) {
+      warn(`dsh-workbuddy-expert: agent.inject() failed after clearing "${current.id}" (${messageOf(error)}) — the notice was not queued; the composition is still removed`)
+    }
+
+    return { kind: 'success', text: `已移除专家 ${current.id}，会话恢复默认 agent。移除在下一个模型请求边界生效，会话历史保持不变。` }
+  }
+
   return {
     /** Serialized soft-switch transaction for one session. */
     switch(agent, nextId) {
       const sessionId = agent?.id
       if (sessionId === undefined) return Promise.resolve({ kind: 'error', text: '/expert: 缺少当前会话的 agent 上下文，无法切换。' })
       return enqueue(sessionId, () => runSwitch(agent, nextId))
+    },
+
+    /**
+     * Serialized clear transaction for one session: dispose the current
+     * expert composition and return the session to the default agent.
+     * Mirrors runSwitch's ordering rules (turn boundary, event, notice) —
+     * the `expert/cleared` event keeps the durable log symmetric so a
+     * future replay sees the removal, not just selections.
+     */
+    clear(agent) {
+      const sessionId = agent?.id
+      if (sessionId === undefined) return Promise.resolve({ kind: 'error', text: '/expert off: 缺少当前会话的 agent 上下文，无法移除专家。' })
+      return enqueue(sessionId, () => runClear(agent))
     },
 
     /** Current composition state for one session (in-memory projection). */

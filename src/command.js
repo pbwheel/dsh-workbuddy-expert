@@ -3,6 +3,7 @@
  *
  *   /expert          → the discovered expert table (valid + broken rows)
  *   /expert <id>     → the serialized soft-switch transaction (src/switch.js)
+ *   /expert off      → remove the session's expert (dispose + default agent)
  *
  * Registration uses the VERIFIED `commands` contract (design §11 #4):
  *   ctx.commands.register({ name, description, input?, recordInput?,
@@ -63,6 +64,7 @@ export function renderExpertList(result, rootPaths = []) {
  * @param {{list: () => Promise<{experts: object[], warnings: string[]}>}} registry
  * @param {{
  *   switch: (agent: object, nextId: string) => Promise<{kind: string, text: string}>,
+ *   clear: (agent: object) => Promise<{kind: string, text: string}>,
  * }} switcher
  * @param {string[]} [rootPaths] - discovery roots for the empty-state hint
  * @returns {() => void} disposer unregistering the command (no-op when absent)
@@ -79,7 +81,7 @@ export function registerExpertCommand(ctx, registry, switcher, rootPaths = []) {
   }
   return commands.register({
     name: COMMAND_NAME,
-    description: 'List discovered experts; /expert <id> soft-switches this session\'s expert role and skills.',
+    description: 'List discovered experts; /expert <id> soft-switches this session\'s expert role and skills; /expert off removes it.',
     handler: async (invocation) => {
       const argument = typeof invocation?.rawInput === 'string' ? invocation.rawInput.trim() : ''
       const result = await registry.list()
@@ -88,6 +90,12 @@ export function registerExpertCommand(ctx, registry, switcher, rootPaths = []) {
         return { kind: 'success', text }
       }
       const agent = invocation?.agent
+      if (argument === 'off') {
+        if (agent === undefined || agent === null) {
+          return { kind: 'error', text: '/expert off: 当前命令缺少 agent 上下文，无法移除专家。' }
+        }
+        return switcher.clear(agent)
+      }
       if (agent === undefined || agent === null) {
         return { kind: 'error', text: `/expert ${argument}: 当前命令缺少 agent 上下文，无法切换。当前专家：\n${text}` }
       }

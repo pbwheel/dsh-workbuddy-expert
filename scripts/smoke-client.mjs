@@ -368,6 +368,82 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
   delete sandbox.fetch
 }
 
+// 4c. Live session with a current expert: the remove lane POSTs /api/clear
+// and the face falls back to the bare 专家 label.
+{
+  const script = makeFetchScript([
+    { method: 'GET', url: '/dsh-workbuddy-expert/api/experts?sessionId=sess-2',
+      body: { ...TABLE, sessionId: 'sess-2', currentExpertId: null } },
+    { method: 'POST', url: '/dsh-workbuddy-expert/api/clear',
+      body: { kind: 'success', text: '已移除专家 editor' } },
+  ])
+  sandbox.fetch = script.fetchStub
+  const view = renderComponent(mod.ExpertSelector, {
+    t, sessionId: 'sess-2', initialData: { ...TABLE, sessionId: 'sess-2', currentExpertId: 'editor' },
+  })
+
+  const buttonOf = (tree) => tree.children.find((child) => child?.type === 'button' && child.props.className === 'wbe-btn')
+  const labelOf = (button) => button.children.find((child) => child?.props?.className === 'wbe-btn-label').children.join('')
+  const removeRowOf = (tree) => findAll(tree, (node) => node.type === 'button' && node.props.className === 'wbe-remove')[0]
+
+  // No selection rendered yet? The menu is closed — the remove row only
+  // exists inside the OPEN popover.
+  assert.equal(removeRowOf(view.tree()), undefined, 'the remove lane lives inside the popover')
+
+  buttonOf(view.tree()).props.onClick()
+  view.rerender()
+  const removeRow = removeRowOf(view.tree())
+  assert.ok(removeRow, 'a live selection renders the remove lane')
+  assert.ok(String(removeRow.children.join('')).includes('移除专家'), 'the remove label is localized')
+
+  removeRow.props.onClick()
+  view.rerender()
+  const button = buttonOf(view.tree())
+  assert.equal(button.props.disabled, true, 'clearing disables the control')
+  assert.equal(labelOf(button), '正在移除专家…', 'the face shows the clearing label')
+
+  await flush()
+  view.rerender()
+  const settled = buttonOf(view.tree())
+  assert.equal(settled.props.disabled, false, 'the control re-enables once clear settles')
+  assert.equal(labelOf(settled), '专家', 'the face falls back to the bare label with no current expert')
+  const clearCall = script.calls.find((call) => call.url.endsWith('/api/clear'))
+  assert.equal(clearCall?.method, 'POST')
+  assert.deepEqual(clearCall?.body, JSON.stringify({ sessionId: 'sess-2' }), 'the clear POST body carries only sessionId')
+  delete sandbox.fetch
+}
+
+// 4d. Staged draft: the remove lane CANCELS the draft locally — no request.
+{
+  const script = makeFetchScript([
+    { method: 'GET', url: '/dsh-workbuddy-expert/api/experts', body: { ...TABLE } },
+  ])
+  sandbox.fetch = script.fetchStub
+  const view = renderComponent(mod.ExpertSelector, { t, initialData: { ...TABLE } })
+
+  const buttonOf = (tree) => tree.children.find((child) => child?.type === 'button' && child.props.className === 'wbe-btn')
+  const labelOf = (button) => button.children.find((child) => child?.props?.className === 'wbe-btn-label').children.join('')
+  buttonOf(view.tree()).props.onClick()
+  view.rerender()
+  const items = findAll(view.tree(), (node) => node.type === 'button' && node.props.className === 'wbe-item')
+  items.find((item) => item.children.find((c) => c?.props?.className === 'wbe-item-main')?.children[0].children[1].children[0] === 'writer').props.onClick()
+  view.rerender()
+  assert.equal(buttonOf(view.tree()).props['data-staged'], 'true', 'the draft is staged')
+
+  buttonOf(view.tree()).props.onClick()
+  view.rerender()
+  const removeRow = findAll(view.tree(), (node) => node.type === 'button' && node.props.className === 'wbe-remove')[0]
+  assert.ok(removeRow, 'a staged draft renders the cancel lane')
+  removeRow.props.onClick()
+  view.rerender()
+  const button = buttonOf(view.tree())
+  assert.equal(button.props['data-staged'], undefined, 'the draft is dropped')
+  assert.equal(labelOf(button), '专家', 'the face returns to the bare label')
+  assert.equal(script.calls.filter((call) => call.method === 'POST').length, 0,
+    'cancelling a staged draft fires NO request')
+  delete sandbox.fetch
+}
+
 // ── 4c. the market page (ticket 08): pure derivations ───────────────────────
 
 assert.equal(mod.localeNameOf({ id: 'x', name: 'Coder', zhName: '程序员' }, 'zh'), '程序员')
@@ -692,9 +768,11 @@ const SAME_ORIGIN = { origin: 'http://x.invalid', host: 'x.invalid' }
   const registry = { list: async () => ({ experts, warnings: ['w1'] }) }
   const switchCalls = []
   const composeCalls = []
+  const clearCalls = []
   const agent = { id: 'sess-1' }
   const switcher = {
     switch: async (a, expertId) => { switchCalls.push([a.id, expertId]); return { kind: 'success', text: 'ok' } },
+    clear: async (a) => { clearCalls.push([a.id]); return { kind: 'success', text: 'cleared' } },
     stateOf: (sessionId) => (sessionId === 'sess-1' ? { id: 'editor' } : undefined),
     composeForCreation: async (a, expertId) => { composeCalls.push([a.id, expertId]); return { kind: 'success', text: 'ok' } },
   }
@@ -705,10 +783,11 @@ const SAME_ORIGIN = { origin: 'http://x.invalid', host: 'x.invalid' }
   const dispose = mountSelectorRoutes({ webServer: server }, { registry, switcher, resolveAgent })
   assert.deepEqual([...server.routes.keys()].sort(), [
     'exact /dsh-workbuddy-expert/api/after-create',
+    'exact /dsh-workbuddy-expert/api/clear',
     'exact /dsh-workbuddy-expert/api/expert-avatar',
     'exact /dsh-workbuddy-expert/api/experts',
     'exact /dsh-workbuddy-expert/api/switch',
-  ], 'exactly the four selector routes registered')
+  ], 'exactly the five selector routes registered')
 
   const route = (path) => server.routes.get(`exact ${path}`).handler
 
@@ -771,6 +850,23 @@ const SAME_ORIGIN = { origin: 'http://x.invalid', host: 'x.invalid' }
       makeRequest({ method: 'POST', headers: SAME_ORIGIN, chunks: [JSON.stringify({ sessionId: 'fresh', expertId: 'editor' })] }), res)
     assert.equal(res.status, 200)
     assert.deepEqual(composeCalls, [['fresh', 'editor']], 'after-create delegates to composeForCreation')
+  }
+
+  // POST /api/clear: delegation + guards + sessionId-only body validation.
+  {
+    const res = makeResponse()
+    await route('/dsh-workbuddy-expert/api/clear')(
+      makeRequest({ method: 'POST', headers: SAME_ORIGIN, chunks: [JSON.stringify({ sessionId: 'sess-1' })] }), res)
+    assert.equal(res.status, 200)
+    assert.deepEqual(JSON.parse(res.body), { kind: 'success', text: 'cleared' })
+    assert.deepEqual(clearCalls, [['sess-1']], 'clear received the resolved agent')
+    const res2 = makeResponse()
+    await route('/dsh-workbuddy-expert/api/clear')(makeRequest({ method: 'GET' }), res2)
+    assert.equal(res2.status, 405, 'non-POST rejected on clear')
+    const res3 = makeResponse()
+    await route('/dsh-workbuddy-expert/api/clear')(
+      makeRequest({ method: 'POST', headers: SAME_ORIGIN, chunks: ['{}'] }), res3)
+    assert.equal(res3.status, 400, 'missing sessionId rejected on clear')
   }
 
   // Unresolvable agent: a clean domain error, never a crash.
