@@ -213,6 +213,12 @@ function injectMessage(text) {
     id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: 'dsh-workbuddy-expert', form: 'notice', summary: 'expert switch' },
+    // Session format v4: each producer owns its source kind; the retired
+    // wrapper `kind: 'plugin'` (+ `plugin` field) is rejected by the host's
+    // v4 admission ("requires a producer-owned source kind"). The canonical
+    // lift — identical to the host's own V3→V4 migration for third-party
+    // plugins — is the namespaced `plugin:<package>` kind with the wrapper
+    // field dropped; `form:'notice'` + `summary` stay (ContextFormed).
+    source: { kind: 'plugin:dsh-workbuddy-expert', form: 'notice', summary: 'expert switch' },
   }
 }

@@ -719,7 +719,10 @@ assert.equal(plugin.name, 'dsh-workbuddy-expert')
   assert.equal(agent.injections.length, injectionsBefore + 1, 'the switch notice was injected once')
   assert.ok(agent.injections.at(-1).content[0].text.includes('已从专家 video-editor 切换为'),
     'the notice states the from→to switch')
-  assert.equal(agent.injections.at(-1).source.plugin, 'dsh-workbuddy-expert')
+  // Session format v4: producer-owned source kind (namespaced, wrapper-free).
+  assert.equal(agent.injections.at(-1).source.kind, 'plugin:dsh-workbuddy-expert')
+  assert.equal(agent.injections.at(-1).source.plugin, undefined, 'the retired v3 `plugin` wrapper field is gone')
+  assert.equal(agent.injections.at(-1).source.form, 'notice')
 
   const back = await switcher.switch(agent, 'video-editor')
   assert.equal(back.kind, 'success')
