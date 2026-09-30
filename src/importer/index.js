@@ -1,14 +1,24 @@
 /**
  * Importer segment entry (design §7, ticket 06): mounts the WorkBuddy
- * source settings namespace + the read-only API routes on one shared scan
- * catalog. `src/index.js` wiring is done by the integrator later — this
- * module only exposes `mountImporter(ctx)`.
+ * read-only API routes and — on a full Cordis context — the ticket-07
+ * export engine (install/update/uninstall as expert-folder export +
+ * the /api/state installed overlay) on one shared scan catalog.
  *
- * Everything the segment registers is disposed by the returned disposer
- * (or, for the settings namespace, by the calling plugin fiber itself —
- * the settings service removes namespaces when their registering fiber
- * disposes, so the disposer here drops only this segment's own watcher
- * and the routes).
+ * Settings persistence rides the DSH 0.2 Config model (see
+ * ./settings.js): no custom namespace registration — the plugin's
+ * exported schemastery `Config` (volatile `sourcePath`) is the form the
+ * settings service projects under THIS entry's id, and volatile commits
+ * invalidate the scan cache through `loader/volatile-update`.
+ *
+ * Everything the segment registers is disposed by the returned
+ * disposer; the settings page policy follows the calling fiber itself.
+ *
+ * `options.config` is the plugin's live config reference (volatile
+ * sourcePath ref on the live host, plain object for test doubles) —
+ * the fallback read whenever the settings form row is absent.
+ * `options.expertsRoot` fixes the export root explicitly (the caller
+ * resolves it from the SAME dshHome the discovery roots use, keeping
+ * 安装 = 导出 与 discovery 一致).
  */
 
 import { homedir } from 'node:os'
@@ -17,47 +27,52 @@ import { join } from 'node:path'
 import { createCatalog } from './catalog.js'
 import { createExporter } from './export.js'
 import { mountImporterRoutes } from './routes.js'
-import { mountImporterSettings } from './settings.js'
-import { namespaceDescriptor } from './settings.js'
-import { resolveSchemastery } from './util.js'
+import { entryIdOf, mountPagePolicy, mountVolatileWatch } from './settings.js'
 
 /**
- * Mount the WorkBuddy importer: settings registration (needs a live
- * schemastery factory — resolved through the layered tiers in util.js),
- * the shared scan cache, the read-only routes, and — on a full Cordis
- * context — the ticket-07 export engine (install/update/uninstall as
- * expert-folder export + the /api/state installed overlay).
- *
- * The engine mounts only when the context exposes `effect` (a full
- * plugin fiber): plain test doubles of ctx keep the read-only ticket-06
- * surface, while the live plugin gets the mutating routes without any
- * caller-side change. `options.expertsRoot` overrides the export root
- * (default `<DSH_HOME|~/.dsh>/experts`, design §7).
+ * Mount the WorkBuddy importer: the volatile-commit watcher, the page
+ * policy, the shared scan cache, the read-only routes, and the export
+ * engine.
  *
  * @param {object} ctx - Cordis plugin context exposing `webServer` + `settings`
- * @param {{expertsRoot?: string}} [options]
+ * @param {{config?: object, expertsRoot?: string}} [options]
  * @returns {Promise<() => void>} disposer dropping every registration
  */
 export async function mountImporter(ctx, options = {}) {
   if (ctx.get('webServer') === undefined || ctx.get('settings') === undefined) {
     throw new Error('dsh-workbuddy-expert importer requires the webServer and settings services')
   }
-  const z = await resolveSchemastery()
+  const ns = entryIdOf(ctx)
   const catalog = createCatalog()
-  const offSettings = mountImporterSettings(ctx.settings, z, catalog)
+  const offWatch = mountVolatileWatch(ctx, catalog)
+  const offPolicy = mountPagePolicy(ctx)
 
+  // The engine mounts whenever the context can own effects (a full
+  // plugin fiber) or the caller pins the root explicitly (tests). The
+  // default root keeps the old env precedence for direct callers; the
+  // live wiring always passes the caller-resolved dshHome root so
+  // 安装 = 导出 lands in the SAME experts tree discovery scans.
   const engineCapable = typeof ctx.effect === 'function' || options.expertsRoot !== undefined
   const exporter = engineCapable
     ? createExporter({
       expertsRoot: options.expertsRoot ?? join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'experts'),
       catalog,
-      getRawSourcePath: () => namespaceDescriptor(ctx.settings).value.sourcePath,
+      getRawSourcePath: () => {
+        const settings = ctx.get('settings')
+        const row = typeof settings?.describe === 'function' ? settings.describe().find((entry) => entry?.ns === ns) : undefined
+        const fromForm = row?.value?.sourcePath
+        if (typeof fromForm === 'string' && fromForm.trim() !== '') return fromForm
+        const value = options.config?.sourcePath
+        const raw = typeof value?.get === 'function' ? value.get() : value
+        return typeof raw === 'string' && raw.trim() !== '' ? raw : undefined
+      },
     })
     : undefined
 
-  const offRoutes = mountImporterRoutes(ctx, { catalog, exporter })
+  const offRoutes = mountImporterRoutes(ctx, { catalog, exporter, ns, config: options.config })
   return () => {
     offRoutes()
-    offSettings()
+    offPolicy()
+    offWatch()
   }
 }

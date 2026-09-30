@@ -77,9 +77,9 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 const root = new URL('..', import.meta.url).pathname
 
@@ -89,14 +89,36 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 assert.equal(pkg.name, 'dsh-workbuddy-expert')
 assert.equal(pkg.type, 'module', 'zero-build ESM, no runtime deps')
 assert.equal(pkg.main, 'src/index.js')
-assert.deepEqual(Object.keys(pkg.dependencies ?? {}), [], 'no runtime dependencies')
+assert.deepEqual(pkg.dependencies, { '@deepseek-ai/schemastery': '3.18.4' },
+  'exactly one production dependency: the harness schema factory, exact-pinned')
 assert.equal(pkg.dsh?.bundle?.patch, './cordis.patch.yml', 'bundle patch declared')
 assert.ok(Array.isArray(pkg.dsh?.client?.inject) && pkg.dsh.client.inject.length > 0,
   'client half declared since P1 (ticket 05): dsh.client.inject is a non-empty list')
 assert.equal(pkg.dsh.client.platform, 'web', 'client platform declared')
+assert.equal(pkg.dsh?.manifestVersion, 1, 'dsh.manifestVersion declares format 1')
+assert.equal(pkg.engines?.dsh, '>=0.2.0-rc.2 <0.3.0', 'engines.dsh declares the compatible runtime range')
+assert.equal(pkg.peerDependencies?.['@deepseek-ai/dsh'], '>=0.2.0-rc.2 <0.3.0',
+  'peerDependencies carry the enforced DSH runtime range (0.2 settings model)')
 for (const [specifier, target] of Object.entries(pkg.exports)) {
+  if (target.includes('*')) {
+    const dir = join(root, dirname(target))
+    const pattern = basename(target).replace(/[.]/g, '\\.').replace(/\*/g, '.*')
+    const re = new RegExp(`^${pattern}$`)
+    const matches = readdirSync(dir, { withFileTypes: true }).filter((entry) => re.test(entry.name))
+    assert.ok(matches.length > 0, `exports pattern has at least one target: ${specifier} -> ${target}`)
+    continue
+  }
   assert.ok(readFileSync(join(root, target), 'utf8') !== undefined, `exports target exists: ${specifier} -> ${target}`)
 }
+// Plugin-inventory display meta (readPluginMeta): locale/en.json + zh.json
+// with meta.title/meta.description, plus a package.json icon reference.
+for (const language of ['en', 'zh']) {
+  const meta = JSON.parse(readFileSync(join(root, 'locale', `${language}.json`), 'utf8')).meta
+  assert.equal(typeof meta?.title, 'string', `locale/${language}.json carries meta.title`)
+  assert.ok(meta.title.trim() !== '', `locale/${language}.json meta.title is non-empty`)
+  assert.equal(typeof meta?.description, 'string', `locale/${language}.json carries meta.description`)
+}
+assert.ok(pkg.icon !== undefined && existsSync(join(root, pkg.icon)), 'package.json icon points at a real file')
 const patchText = readFileSync(join(root, 'cordis.patch.yml'), 'utf8')
 assert.ok(patchText.includes('- insert:'), 'patch is a top-level insert array')
 assert.ok(patchText.includes('id: dsh-workbuddy-expert'), 'patch row id present')

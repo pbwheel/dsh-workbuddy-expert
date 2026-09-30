@@ -38,48 +38,22 @@ const root = new URL('..', import.meta.url).pathname
 const { createCatalog } = await import(join(root, 'src', 'importer', 'catalog.js'))
 const { createExporter, BROKEN_MANIFEST_REASON, MANIFEST_NAME, EXPORT_ORDER } = await import(join(root, 'src', 'importer', 'export.js'))
 const { scanWorkbuddyRoot } = await import(join(root, 'src', 'importer', 'scanner.js'))
-const { SETTINGS_NS, mountImporterSettings, namespaceDescriptor } = await import(join(root, 'src', 'importer', 'settings.js'))
+const { SETTINGS_NS, namespaceDescriptor } = await import(join(root, 'src', 'importer', 'settings.js'))
 const { mountImporterRoutes } = await import(join(root, 'src', 'importer', 'routes.js'))
 const { scanDiscoveryRoots } = await import(join(root, 'src', 'registry.js'))
 
 // ── shared fakes (same contracts smoke-importer established) ────────────────
 
-function makeFakeZ() {
+/** Fake settings service mirroring the 0.2 entry-addressed contract. */
+function makeFakeSettings(initial = {}) {
+  const rows = new Map(Object.entries(initial).map(([ns, value]) => [ns, { ns, value: { ...value }, revision: 0 }]))
   return {
-    string: () => ({ type: 'string' }),
-    object(dict) {
-      const schema = (value) => {
-        if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('expected an object')
-        const resolved = {}
-        for (const [key, child] of Object.entries(dict)) {
-          if (value[key] !== undefined) resolved[key] = value[key]
-        }
-        return resolved
-      }
-      schema.toJSON = () => ({ type: 'object', dict })
-      return schema
-    },
-  }
-}
-
-function makeFakeSettings() {
-  const registrations = new Map()
-  return {
-    register(ns, schema, options) {
-      const reg = { ns, schema, base: options?.base, user: undefined, revision: 0, resolved: schema({ ...(options?.base ?? {}) }) }
-      registrations.set(ns, reg)
-      return {
-        get: () => reg.resolved,
-        watch: () => () => {},
-        update: (patch) => this.update(ns, patch),
-      }
-    },
-    describe: () => [...registrations.values()].map((reg) => ({ ns: reg.ns, value: reg.resolved, revision: reg.revision })),
+    describe: () => [...rows.values()].map((row) => ({ ns: row.ns, value: { ...row.value }, revision: row.revision })),
     async update(ns, patch) {
-      const reg = registrations.get(ns)
-      reg.resolved = reg.schema({ ...(reg.base ?? {}), ...(reg.user ?? {}), ...patch })
-      reg.user = { ...(reg.user ?? {}), ...patch }
-      reg.revision += 1
+      const row = rows.get(ns)
+      if (row === undefined) throw new Error(`No configurable plugin entry "${ns}"`)
+      Object.assign(row.value, patch)
+      row.revision += 1
     },
   }
 }
@@ -167,10 +141,8 @@ srcWrite('plug-b/.codebuddy-plugin/plugin.json', JSON.stringify({ name: 'plug-b'
 
 let importedClock = 0
 const catalog = createCatalog()
-const settings = makeFakeSettings()
-mountImporterSettings(settings, makeFakeZ(), catalog)
-await settings.update(SETTINGS_NS, { sourcePath: sourceRoot })
-const rawSourcePathOf = () => namespaceDescriptor(settings).value.sourcePath
+const settings = makeFakeSettings({ [SETTINGS_NS]: { sourcePath: sourceRoot } })
+const rawSourcePathOf = () => namespaceDescriptor(settings, SETTINGS_NS).value.sourcePath
 
 const exporter = createExporter({
   expertsRoot,
@@ -405,14 +377,12 @@ const mode = (path) => statSync(path).mode & 0o777
 
 {
   const server = makeFakeServer()
-  const routeSettings = makeFakeSettings()
+  const routeSettings = makeFakeSettings({ [SETTINGS_NS]: { sourcePath: sourceRoot } })
   const routeCatalog = createCatalog()
-  mountImporterSettings(routeSettings, makeFakeZ(), routeCatalog)
-  await routeSettings.update(SETTINGS_NS, { sourcePath: sourceRoot })
   const routeExporter = createExporter({
     expertsRoot,
     catalog: routeCatalog,
-    getRawSourcePath: () => namespaceDescriptor(routeSettings).value.sourcePath,
+    getRawSourcePath: () => namespaceDescriptor(routeSettings, SETTINGS_NS).value.sourcePath,
   })
   const off = mountImporterRoutes(
     { webServer: server, settings: routeSettings },
@@ -497,13 +467,11 @@ const mode = (path) => statSync(path).mode & 0o777
       await gate
       return scanWorkbuddyRoot(rawPath)
     })
-    const gatedSettings = makeFakeSettings()
-    mountImporterSettings(gatedSettings, makeFakeZ(), gatedCatalog)
-    await gatedSettings.update(SETTINGS_NS, { sourcePath: sourceRoot })
+    const gatedSettings = makeFakeSettings({ [SETTINGS_NS]: { sourcePath: sourceRoot } })
     const gatedExporter = createExporter({
       expertsRoot,
       catalog: gatedCatalog,
-      getRawSourcePath: () => namespaceDescriptor(gatedSettings).value.sourcePath,
+      getRawSourcePath: () => namespaceDescriptor(gatedSettings, SETTINGS_NS).value.sourcePath,
     })
     const gatedServer = makeFakeServer()
     mountImporterRoutes({ webServer: gatedServer, settings: gatedSettings }, { catalog: gatedCatalog, exporter: gatedExporter })

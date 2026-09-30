@@ -1,15 +1,20 @@
 /**
- * dsh-workbuddy-expert host entry (ticket 02): wires the discovery roots
+ * dsh-workbuddy-expert host entry: wires the discovery roots
  * (project `<cwd>/.agents/experts`, user `<dshHome>/experts`, optional
  * config extras with a required `trust: user`), the cached registry, the
  * zero-dependency root watcher, the `ctx.experts` service, and the `/expert`
  * listing command. Every side effect is registered through `ctx.effect` and
  * therefore reversible on plugin unload.
  *
- * No `Config` export on purpose (the sister plugin's lesson): cordis
- * resolveConfig() expects a schemastery schema, so a plain object here would
- * crash the loader. The plugin's options stay a plain object consumed
- * defensively inside apply().
+ * Config (DSH 0.2 settings model): exported as a schemastery schema —
+ * `sourcePath` is `.volatile()` so the settings service projects an
+ * editable form under this entry's id, `loader/volatile-update` commits
+ * land in the running reference without remounting, and `roots`/`dshHome`
+ * stay ordinary fields (an edit remounts, which is their correct
+ * semantics — discovery roots rewire wholesale). Schemastery is resolved
+ * through the layered tiers in importer/util.js; outside a dsh host the
+ * export degrades to `undefined` and apply() keeps consuming a plain
+ * object (test doubles, standalone tooling) — never a load failure.
  */
 
 import { homedir } from 'node:os'
@@ -17,6 +22,8 @@ import { join, resolve } from 'node:path'
 
 import { registerExpertCommand } from './command.js'
 import { mountImporter } from './importer/index.js'
+import { DEFAULT_SOURCE_PATH } from './importer/scanner.js'
+import { resolveSchemastery } from './importer/util.js'
 import { buildDiscoveryRoots, createRegistry } from './registry.js'
 import { mountSelectorRoutes } from './selector-routes.js'
 import { createSwitcher } from './switch.js'
@@ -24,6 +31,20 @@ import { watchRoots } from './watch.js'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'dsh-workbuddy-expert'
+
+/** The plugin's Config schema (see the module header); undefined when no tier resolves schemastery. */
+let Config
+try {
+  const z = await resolveSchemastery()
+  Config = z.object({
+    sourcePath: z.string().default(DEFAULT_SOURCE_PATH).volatile(),
+    dshHome: z.string(),
+    roots: z.array(z.object({ path: z.string(), trust: z.string() })),
+  })
+} catch {
+  Config = undefined
+}
+export { Config }
 
 /** Expand `~`/`~/` prefixes against the OS home; anything else passes through. */
 function expandHomePath(value) {
@@ -137,15 +158,18 @@ export function apply(ctx, config = {}) {
     }, 'dsh-workbuddy-expert:selector-routes')
   })
 
-  // Importer segment (ticket 06): WorkBuddy source settings + read-only API.
-  // Staged inject on BOTH services (mountImporter throws when either is
-  // missing): a profile without them leaves the registry/switch core fully
-  // usable, and the segment mounts the moment both services are live.
+  // Importer segment: WorkBuddy source settings + market routes. Staged
+  // inject on BOTH services (mountImporter throws when either is
+  // missing): a profile without them leaves the registry/switch core
+  // fully usable, and the segment mounts the moment both services are
+  // live. The export root comes from the SAME resolved dshHome as the
+  // discovery roots (安装 = 导出 与扫描一致), and the plugin's config
+  // reference rides along for the volatile sourcePath reads.
   ctx.inject(['webServer', 'settings'], (importerCtx) => {
     ctx.effect(() => {
       let disposed = false
       let offImporter
-      mountImporter(importerCtx)
+      mountImporter(importerCtx, { config, expertsRoot: join(dshHome, 'experts') })
         .then((off) => {
           if (disposed) off()
           else offImporter = off

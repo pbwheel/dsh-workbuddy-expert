@@ -66,7 +66,7 @@ import { readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, relative, sep } from 'node:path'
 
 import { ID_RE, expandTildePath } from './scanner.js'
-import { SETTINGS_NS, namespaceDescriptor } from './settings.js'
+import { entryIdOf, namespaceDescriptor, readSourcePath, settingsRowOf } from './settings.js'
 import { errorMessage } from './util.js'
 
 export const ROUTE_BASE = '/dsh-workbuddy-expert'
@@ -150,12 +150,12 @@ function stateCardOf(expert) {
  * the payload additionally carries the installed overlay — top-level
  * installed/broken/orphans lists plus per-card installed/updatable
  * flags — mirroring wb-market's /api/state shape.
- * @param {object} deps - { settingsService, catalog, exporter? }
+ * @param {object} deps - { settingsService, catalog, exporter?, ns, config }
  * @returns {Promise<object>} the state payload
  */
-async function buildState({ settingsService, catalog, exporter }) {
-  const descriptor = namespaceDescriptor(settingsService)
-  const rawSourcePath = descriptor.value.sourcePath
+async function buildState({ settingsService, catalog, exporter, ns, config }) {
+  const row = settingsRowOf(settingsService, ns)
+  const rawSourcePath = rawOf(row, config)
   const exists = await pathExists(rawSourcePath)
   const scan = await catalog.stateOf(rawSourcePath)
   const warnings = [...scan.warnings]
@@ -164,7 +164,7 @@ async function buildState({ settingsService, catalog, exporter }) {
   const state = {
     sourcePath: rawSourcePath,
     pathExists: exists,
-    revision: descriptor.revision,
+    revision: typeof row?.revision === 'number' ? row.revision : undefined,
     experts,
     warnings,
   }
@@ -182,9 +182,20 @@ async function buildState({ settingsService, catalog, exporter }) {
   return state
 }
 
+/**
+ * The RAW stored source path (tilde intact): the settings form's live
+ * value when the entry exposes one, else the plugin config reference
+ * (volatile or plain) — one truth on both the live host and doubles.
+ */
+function rawOf(row, config) {
+  const fromForm = row?.value?.sourcePath
+  if (typeof fromForm === 'string' && fromForm.trim() !== '') return fromForm
+  return readSourcePath(config)
+}
+
 /** The RAW stored source path every scan-facing caller reads (tilde intact). */
-function currentSourcePath(settingsService) {
-  return namespaceDescriptor(settingsService).value.sourcePath
+function currentSourcePath(settingsService, ns, config) {
+  return rawOf(settingsRowOf(settingsService, ns), config)
 }
 
 /** Validate the `sourcePath` field of a config body; returns it verbatim. */
@@ -206,9 +217,14 @@ function requireSourcePath(body) {
  * and with config/refresh.
  * @param {object} hostCtx - injected context exposing `webServer` + `settings`
  * @param {{ invalidate(): void, stateOf(raw: string): Promise<object> }} deps - { catalog } the shared scan cache
+ * @param {string} [deps.ns] - this plugin's settings entry id (defaults
+ *   to entryIdOf(hostCtx): the live fiber's entry id, patch id fallback)
+ * @param {object} [deps.config] - the plugin's config reference (volatile
+ *   sourcePath ref or plain object) — the fallback read when the settings
+ *   form row is absent
  * @param {object} [deps.exporter] - the ticket-07 export engine (optional)
  */
-export function mountImporterRoutes(hostCtx, { catalog, exporter }) {
+export function mountImporterRoutes(hostCtx, { catalog, exporter, ns, config }) {
   const disposers = []
   const register = (route) => {
     const off = hostCtx.webServer.register(route)
@@ -216,10 +232,11 @@ export function mountImporterRoutes(hostCtx, { catalog, exporter }) {
   }
 
   /** What buildState reads: settings + the shared scan cache (+ engine). */
-  const deps = { settingsService: hostCtx.settings, catalog, exporter }
+  const entryNs = ns ?? entryIdOf(hostCtx)
+  const deps = { settingsService: hostCtx.settings, catalog, exporter, ns: entryNs, config }
 
   /** The RAW stored source path (tilde intact) every scan-facing caller reads. */
-  const rawSourcePathOf = () => currentSourcePath(hostCtx.settings)
+  const rawSourcePathOf = () => currentSourcePath(hostCtx.settings, entryNs, config)
 
   /**
    * The CURRENT scan table's card for one expert id (undefined when absent)
@@ -340,9 +357,10 @@ export function mountImporterRoutes(hostCtx, { catalog, exporter }) {
         const expectedRevision = body.expectedRevision
         let state
         try {
-          // Service-level update: the scope-level update(patch) takes no
-          // expectedRevision, so conflict protection is only available here.
-          await hostCtx.settings.update(SETTINGS_NS, { sourcePath }, expectedRevision)
+          // Service-level update against THIS entry's Config form (the
+          // 0.2 settings model: no custom namespace — the address is the
+          // plugin's entry id, conflict protection stays revision-based).
+          await hostCtx.settings.update(entryNs, { sourcePath }, expectedRevision)
           state = await buildState(deps)
         } catch (error) {
           if (error?.code === 'SETTINGS_CONFLICT') {
@@ -351,6 +369,15 @@ export function mountImporterRoutes(hostCtx, { catalog, exporter }) {
               code: 'SETTINGS_CONFLICT',
               expectedRevision: error.expected,
               revision: error.actual,
+            })
+            return
+          }
+          // A missing form is a setup problem, not a bad request body:
+          // name the entry so the operator knows which Config to check.
+          if (String(error?.message ?? '').includes('No configurable plugin entry')
+            || String(error?.message ?? '').includes('has no volatile fields')) {
+            sendJson(response, 503, {
+              error: `settings form unavailable for entry "${entryNs}" (${errorMessage(error)}); the plugin's Config schema must load for edits`,
             })
             return
           }

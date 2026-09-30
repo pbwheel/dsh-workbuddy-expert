@@ -229,3 +229,35 @@ P0 结束即可手写专家 + `/expert` 完整验证软切换链路（零 UI、�
 | 10 | 待核实 | §11 五条断言，实施前查源码仓库 |
 
 后续新议题在此追加，保持"议题 → 决策"两列。
+
+## 13. DSH 0.2 迁移（2026-09-30，实测驱动）
+
+**触发**：live 0.2.0-rc.2 上 `/dsh-workbuddy-expert/api/state` 404 —— 0.2 的 `settings`
+服务（dsh-settings `SettingsForms`）**没有 `register(ns, schema, {base})`**，importer 段
+mount 即抛、整段降载；市场页与 sourcePath 持久化全断。选择器半边（`/api/experts` 200）
+不受影响——systemPrompt/skills/tools/commands/webServer 契约在 0.2 全部原样（对照 live
+Service 目录核实）。
+
+**迁移内容**：
+
+| 项 | 0.1（旧） | 0.2（新） |
+|---|---|---|
+| 设置持久化 | `settings.register('workbuddy-expert', schema, {base})` + `scope.watch` | 插件导出 schemastery `Config`（`sourcePath` `.volatile()`）；settings 服务按 entry id（`dsh-workbuddy-expert`）投影表单；`describe()/update()` 以 entry id 寻址 |
+| 变更通知 | scope.watch(next, prev) | Loader `_commitVolatile` → `loader/volatile-update`（paths 只含真实变化的字段）→ 插件侧 `mountVolatileWatch` 失效扫描缓存 |
+| 值读取 | describe 行 value | describe 行 value 优先，缺行回退 volatile ref（`config.sourcePath.get()`）/裸对象（双测）——`readSourcePath` 单一入口 |
+| 冲突保护 | `SETTINGS_CONFLICT`（code/expected/actual） | 同名同字段，路由映射原样保留 |
+| 自有页面 | — | `settings.configure({ auto: false }, ctx.fiber)`（自带市场页的插件按 dsh-settings 作者注记声明，防重复生成表单） |
+| schemastery 解析 | 三层 anchor（profiles/package.json 实际不存在，全失败） | 声明为**精确固定的生产依赖**（3.18.4，hoisted profile 平铺可解）+ 新增"自位置向上找 profile 根"层级兜底 link: 安装 |
+| 导出根 | importer 自算 `$DSH_HOME || ~/.dsh`（与 discovery 的 dshHome 不一致） | `apply()` 用同一 `dshHome` 解析后显式传入（安装=导出 与扫描一致） |
+
+**清单规范化**（对照 0.2 官方 bundle 语音输入包实证）：`peerDependencies:
+{"@deepseek-ai/dsh": ">=0.2.0-rc.2 <0.3.0"}`（安装期/启动期强制校验的兼容声明）、
+`engines.dsh` 同区间、`dsh.manifestVersion: 1`、`locale/{en,zh}.json`（readPluginMeta 的
+meta.title/description）+ exports `"./locale/*.json"` + `icon.svg`（≤256KiB、包内、data URL
+化进插件清单）。未知配置字段经 schemastery merge 语义保留——`roots`/`dshHome` 无需入
+schema 也永不丢失（verify-host-contract.mjs 断言）。
+
+**验证链**：四套冒烟全绿 + `scripts/verify-host-contract.mjs` 用从运行中 app.asar 抽取的
+真包（schemastery@3.18.4 / cordis@4.0.4 resolveConfig / cosmokit@1.8.5 volatileEntries+
+updateVolatile）跑通「Config → resolveConfig → volatile ref → commit → readSourcePath」
+全链；安装副本（desktop profile hoisted node_modules）tier-1 加载实测 Config 就位。

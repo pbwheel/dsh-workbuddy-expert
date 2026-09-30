@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![DSH Web Plugin](https://img.shields.io/badge/DSH%20Web-Plugin-0f766e.svg)](#安装)
-[![零构建](https://img.shields.io/badge/构建-零构建零依赖-0f766e.svg)](#开发)
+[![零构建](https://img.shields.io/badge/构建-零构建-0f766e.svg)](#开发)
 
 </div>
 
@@ -77,20 +77,20 @@
 ### 安装插件
 
 ```sh
-git clone --depth 1 --branch v0.1.0 https://github.com/pbwheel/dsh-workbuddy-expert.git
+git clone --depth 1 --branch v0.2.0 https://github.com/pbwheel/dsh-workbuddy-expert.git
 cd dsh-workbuddy-expert
 dsh plugin --profile web add .
 dsh --profile web --dump-config
 ```
 
-配置输出应出现 `dsh-workbuddy-expert`。然后**重启 `dsh web`**（bundles 列表只在启动时读）并**强刷浏览器**。零构建、零运行时依赖。
+配置输出应出现 `dsh-workbuddy-expert`。然后**重启 `dsh web`**（bundles 列表只在启动时读）并**强刷浏览器**。零构建；运行时仅依赖宿主自己的 schema 工厂 @deepseek-ai/schemastery（精确固定）。
 
 ### 让 Agent 帮你安装
 
 把下面这段话发给任意能够执行本机终端命令的 Agent：
 
 ```text
-请将 DSH 插件 dsh-workbuddy-expert 从本仓库安装到 web profile：git clone --depth 1 --branch v0.1.0 https://github.com/pbwheel/dsh-workbuddy-expert.git 后执行 dsh plugin --profile web add <目录>。安装后执行 dsh --profile web --dump-config，确认配置包含 dsh-workbuddy-expert，并告诉我如何重启 DSH Web 和开始使用。
+请将 DSH 插件 dsh-workbuddy-expert 从本仓库安装到 web profile：git clone --depth 1 --branch v0.2.0 https://github.com/pbwheel/dsh-workbuddy-expert.git 后执行 dsh plugin --profile web add <目录>。安装后执行 dsh --profile web --dump-config，确认配置包含 dsh-workbuddy-expert，并告诉我如何重启 DSH Web 和开始使用。
 ```
 
 ### 三步用上 WorkBuddy 专家
@@ -105,9 +105,11 @@ dsh --profile web --dump-config
 
 | 配置项 | 默认值 | 作用 |
 |---|---|---|
-| `sourcePath` | `~/.workbuddy/plugins/marketplaces/experts/plugins` | WorkBuddy 源目录；市场页顶栏或 settings（ns `workbuddy-expert`）可改，`~` 原串存储使用时展开；允许保存不存在路径（页面黄条提示，路径就绪自动恢复） |
+| `sourcePath` | `~/.workbuddy/plugins/marketplaces/experts/plugins` | WorkBuddy 源目录；市场页顶栏或本插件条目的设置表单可改，`~` 原串存储使用时展开；允许保存不存在路径（页面黄条提示，路径就绪自动恢复） |
 | `roots` | — | 可选追加发现根，必须显式 `trust: user` |
 | `dshHome` | `$DSH_HOME` 或 `~/.dsh` | 覆盖 DSH home 解析 |
+
+配置走 DSH 0.2 的 **Config 表单模型**：插件导出 schemastery `Config`（`sourcePath` 为 `.volatile()`），设置服务在本插件条目（entry id `dsh-workbuddy-expert`）下投影可编辑表单；保存落到 profile 的 cordis patch，改动经 `loader/volatile-update` 热生效（不重挂插件）。`roots`/`dshHome` 是普通字段，修改后按 Loader 语义重挂。市场页的 `/api/config` 保存即走这条链（revision 冲突保护不变）。
 
 追加根示例：
 
@@ -124,11 +126,18 @@ dsh --profile web --dump-config
 ## 开发
 
 ```sh
-node scripts/smoke.mjs            # 契约/清洗/注册表/切换冒烟，零依赖
-node scripts/smoke-client.mjs     # client 侧
-node scripts/smoke-importer.mjs   # importer/市场路由
-node scripts/smoke-install.mjs    # 安装=导出链路
+node scripts/smoke.mjs                 # 契约/清洗/注册表/切换冒烟
+node scripts/smoke-client.mjs          # client 侧
+node scripts/smoke-importer.mjs        # importer/市场路由
+node scripts/smoke-install.mjs         # 安装=导出链路
+node scripts/verify-host-contract.mjs  # 对照真实宿主包验证 Config/volatile 契约
 ```
+
+依赖：仅 `@deepseek-ai/schemastery`（精确固定 `3.18.4`，宿主自己的 schema 工厂），装机由 pnpm 解析。
+
+兼容性声明：`engines.dsh` 与 `peerDependencies` 均为 `>=0.2.0-rc.2 <0.3.0` —— 设置模型按 DSH 0.2（entry 表单 + volatile）实现，安装期与启动期都会做版本校验。插件清单含 `dsh.manifestVersion: 1`、`locale/{en,zh}.json` 与 `icon.svg`（插件列表的本地化标题/描述/图标）。
+
+改完 host（`src/`）或 `package.json` 需重启 `dsh web`；只改 `client/client.js` 刷新页面即可。
 
 改完 host（`src/`）或 `package.json` 需重启 `dsh web`；只改 `client/client.js` 刷新页面即可。
 

@@ -408,121 +408,116 @@ assert.equal(cacheScans, 5, 'invalidate() forces a rescan of an unchanged tree')
 
 rmSync(cacheRoot, { recursive: true, force: true })
 
-// ── 3. settings mount over fakes ────────────────────────────────────────────
+// ── 3. settings access over the DSH 0.2 Config model ───────────────────────
 
-const { SETTINGS_NS, buildSourcePathSchema, mountImporterSettings, namespaceDescriptor } =
+const { SETTINGS_NS, readSourcePath, entryIdOf, settingsRowOf, namespaceDescriptor, mountVolatileWatch } =
   await import(join(root, 'src', 'importer', 'settings.js'))
 
-/** Minimal schemastery stand-in: callable object schema + toJSON. */
-function makeFakeZ() {
-  return {
-    string: () => ({ type: 'string' }),
-    object(dict) {
-      const schema = (value) => {
-        if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-          throw new TypeError('expected an object')
-        }
-        const resolved = {}
-        for (const [key, child] of Object.entries(dict)) {
-          const raw = value[key]
-          if (raw !== undefined) {
-            if (child.type === 'string' && typeof raw !== 'string') {
-              throw new TypeError(`expected string at ${key}`)
-            }
-            resolved[key] = raw
-          }
-        }
-        return resolved
-      }
-      schema.toJSON = () => ({ type: 'object', dict })
-      return schema
-    },
-  }
-}
+assert.equal(SETTINGS_NS, 'dsh-workbuddy-expert', 'the settings address is the plugin ENTRY id (patch insert id)')
 
-/** Fake settings service mirroring the contract the routes rely on. */
-function makeFakeSettings() {
-  const registrations = new Map()
+// readSourcePath: plain string, volatile ref, and the default fallback.
+assert.equal(readSourcePath({ sourcePath: '~/kept-raw' }), '~/kept-raw', 'a plain config string reads verbatim')
+assert.equal(readSourcePath({ sourcePath: { get: () => '/from/the/ref' } }), '/from/the/ref', 'a volatile ref reads through get()')
+assert.equal(readSourcePath({}), DEFAULT_SOURCE_PATH, 'an absent value falls back to the WorkBuddy default')
+assert.equal(readSourcePath(undefined), DEFAULT_SOURCE_PATH, 'a missing config object falls back too')
+
+// entryIdOf: the live fiber's entry id, with the patch-id fallback.
+assert.equal(entryIdOf({ fiber: { entry: { options: { id: 'custom-entry' } } } }), 'custom-entry',
+  'the live fiber entry id wins when present')
+assert.equal(entryIdOf({}), SETTINGS_NS, 'a plain double falls back to the patch insert id')
+assert.equal(entryIdOf(undefined), SETTINGS_NS, 'a missing context falls back to the patch insert id')
+
+/** Fake settings service mirroring the 0.2 contract the routes rely on. */
+function makeFakeSettings(initial = {}) {
+  const rows = new Map(Object.entries(initial).map(([ns, value]) => [ns, { ns, value: { ...value }, revision: 0 }]))
   return {
-    register(ns, schema, options) {
-      if (registrations.has(ns)) throw new Error(`settings namespace "${ns}" is already registered`)
-      const reg = {
-        ns, schema, base: options?.base, user: undefined, revision: 0, watchers: [],
-        resolved: schema({ ...(options?.base ?? {}) }),
-      }
-      registrations.set(ns, reg)
-      return {
-        get: () => reg.resolved,
-        watch: (callback) => { reg.watchers.push(callback); return () => reg.watchers.splice(reg.watchers.indexOf(callback), 1) },
-        update: (patch) => this.update(ns, patch),
-      }
-    },
-    describe: () => [...registrations.values()].map((reg) => ({ ns: reg.ns, value: reg.resolved, revision: reg.revision })),
-    get: (ns) => registrations.get(ns)?.resolved,
+    describe: () => [...rows.values()].map((row) => ({ ns: row.ns, value: { ...row.value }, revision: row.revision })),
     async update(ns, patch, expectedRevision) {
-      const reg = registrations.get(ns)
-      if (reg === undefined) throw new Error(`settings namespace "${ns}" is not registered`)
-      if (expectedRevision !== undefined && expectedRevision !== reg.revision) {
+      const row = rows.get(ns)
+      if (row === undefined) throw new Error(`No configurable plugin entry "${ns}"`)
+      if (expectedRevision !== undefined && expectedRevision !== row.revision) {
         const error = new Error(
-          `settings namespace "${ns}" changed since it was read (expected revision ${String(expectedRevision)}, now ${String(reg.revision)})`)
+          `settings namespace "${ns}" changed since it was read (expected revision ${String(expectedRevision)}, now ${String(row.revision)})`)
         error.code = 'SETTINGS_CONFLICT'
         error.expected = expectedRevision
-        error.actual = reg.revision
+        error.actual = row.revision
         throw error
       }
-      const before = reg.user === undefined ? undefined : { ...reg.user }
-      const nextUser = { ...(reg.user ?? {}), ...patch }
-      const previous = reg.resolved
-      reg.resolved = reg.schema({ ...(reg.base ?? {}), ...nextUser })
-      reg.user = nextUser
-      if (JSON.stringify(before) !== JSON.stringify(nextUser)) reg.revision += 1
-      for (const watcher of [...reg.watchers]) watcher(reg.resolved, previous)
+      const before = { ...row.value }
+      Object.assign(row.value, patch)
+      if (JSON.stringify(before) !== JSON.stringify(row.value)) row.revision += 1
     },
   }
 }
 
-const fakeZ = makeFakeZ()
-const fakeSettings = makeFakeSettings()
-const settingsCatalog = createCatalog(async () => ({ experts: [], warnings: [] }))
-const offSettings = mountImporterSettings(fakeSettings, fakeZ, settingsCatalog)
-
-assert.equal(SETTINGS_NS, 'workbuddy-expert', 'namespace is workbuddy-expert (decision #8)')
-let descriptor = namespaceDescriptor(fakeSettings)
-assert.equal(descriptor.value.sourcePath, DEFAULT_SOURCE_PATH, 'base default resolves untouched')
-assert.equal(descriptor.revision, 0, 'fresh registration carries revision 0')
+// settingsRowOf / namespaceDescriptor over the fake settings service.
+{
+  const settings = makeFakeSettings({ [SETTINGS_NS]: { sourcePath: DEFAULT_SOURCE_PATH } })
+  const row = settingsRowOf(settings, SETTINGS_NS)
+  assert.equal(row?.value?.sourcePath, DEFAULT_SOURCE_PATH, 'the entry row carries the form value')
+  assert.equal(row?.revision, 0, 'a fresh entry carries revision 0')
+  assert.equal(settingsRowOf(settings, 'other-entry'), undefined, 'an unknown entry id has no row')
+  assert.equal(settingsRowOf({ describe: () => { throw new Error('boom') } }, SETTINGS_NS), undefined,
+    'a throwing describe() degrades to no row, never propagates')
+  let threw = false
+  try { namespaceDescriptor(settings, 'other-entry') } catch { threw = true }
+  assert.ok(threw, 'namespaceDescriptor stays strict: a missing form throws')
+}
 
 // Raw `~` storage + nonexistent path allowed (existence is reported per
 // state request, never validated at write time).
-await fakeSettings.update(SETTINGS_NS, { sourcePath: '~/kept-raw' })
-descriptor = namespaceDescriptor(fakeSettings)
-assert.equal(descriptor.value.sourcePath, '~/kept-raw', '~ survives the write round-trip verbatim')
-await fakeSettings.update(SETTINGS_NS, { sourcePath: '/definitely/not/here' })
-descriptor = namespaceDescriptor(fakeSettings)
-assert.equal(descriptor.value.sourcePath, '/definitely/not/here', 'a nonexistent path saves fine')
+{
+  const settings = makeFakeSettings({ [SETTINGS_NS]: { sourcePath: DEFAULT_SOURCE_PATH } })
+  await settings.update(SETTINGS_NS, { sourcePath: '~/kept-raw' })
+  assert.equal(settingsRowOf(settings, SETTINGS_NS).value.sourcePath, '~/kept-raw', '~ survives the write round-trip verbatim')
+  await settings.update(SETTINGS_NS, { sourcePath: '/definitely/not/here' })
+  assert.equal(settingsRowOf(settings, SETTINGS_NS).value.sourcePath, '/definitely/not/here', 'a nonexistent path saves fine')
+}
 
-const schema = buildSourcePathSchema(fakeZ)
-assert.equal(typeof schema, 'function' && typeof schema.toJSON, 'function', 'schema is callable and exposes toJSON')
+// mountVolatileWatch: only sourcePath commits invalidate; the disposer detaches.
+{
+  let invalidated = 0
+  const catalog = { invalidate: () => { invalidated += 1 } }
+  const listeners = new Map()
+  const fakeCtx = { on: (event, listener) => { listeners.set(event, listener); return () => listeners.delete(event) } }
+  const off = mountVolatileWatch(fakeCtx, catalog)
+  assert.equal(typeof listeners.get('loader/volatile-update'), 'function', 'the watcher subscribes to loader/volatile-update')
+  listeners.get('loader/volatile-update')([['sourcePath']])
+  assert.equal(invalidated, 1, 'a sourcePath commit invalidates the scan cache')
+  listeners.get('loader/volatile-update')([['dshHome']])
+  assert.equal(invalidated, 1, 'a non-sourcePath commit does not invalidate')
+  listeners.get('loader/volatile-update')([['sourcePath'], ['dshHome']])
+  assert.equal(invalidated, 2, 'a mixed commit that touches sourcePath invalidates once')
+  off()
+  assert.equal(listeners.has('loader/volatile-update'), false, 'the disposer detaches the listener')
+  assert.equal(typeof mountVolatileWatch({}, catalog), 'function', 'a context without ctx.on degrades to a no-op disposer')
+}
 
-// Watcher: a sourcePath change drops the cache; a same-value update does not.
+// Watcher integration: a sourcePath commit drops the cache. The Loader's
+// _commitVolatile pre-filters unchanged values (deepEqual guard), so a
+// same-value commit never emits loader/volatile-update — the watch itself
+// trusts that contract and invalidates on every sourcePath event.
 {
   let watcherScans = 0
   const watcherCatalog = createCatalog(async (rawPath) => { watcherScans += 1; return scanWorkbuddyRoot(rawPath) })
-  const watcherSettings = makeFakeSettings()
-  const off = mountImporterSettings(watcherSettings, fakeZ, watcherCatalog)
-  await watcherSettings.update(SETTINGS_NS, { sourcePath: fixtureRoot })
-  await watcherCatalog.stateOf(fixtureRoot)
+  const volatile = { current: fixtureRoot }
+  const config = { sourcePath: { get: () => volatile.current } }
+  const listeners = new Map()
+  const fakeCtx = {
+    on: (event, listener) => { listeners.set(event, listener); return () => listeners.delete(event) },
+    get: () => undefined,
+  }
+  const off = mountVolatileWatch(fakeCtx, watcherCatalog)
+  await watcherCatalog.stateOf(readSourcePath(config))
   assert.equal(watcherScans, 1, 'first request over the fixture scans')
-  await watcherCatalog.stateOf(fixtureRoot)
-  assert.equal(watcherScans, 1, 'unchanged tree serves from cache')
-  await watcherSettings.update(SETTINGS_NS, { sourcePath: fixtureRoot }) // same value
-  await watcherCatalog.stateOf(fixtureRoot)
-  assert.equal(watcherScans, 1, 'a same-value update does not drop the cache (the watcher path guard)')
-  await watcherSettings.update(SETTINGS_NS, { sourcePath: '/definitely/not/here' }) // different value
-  await watcherCatalog.stateOf('/definitely/not/here')
+  await watcherCatalog.stateOf(readSourcePath(config))
+  assert.equal(watcherScans, 1, 'unchanged tree serves from cache (no commit, no invalidation)')
+  volatile.current = '/definitely/not/here'
+  listeners.get('loader/volatile-update')([['sourcePath']]) // the loader emits only CHANGED paths
+  await watcherCatalog.stateOf(readSourcePath(config))
   assert.equal(watcherScans, 2, 'a sourcePath change drops the cache — the new path forces its own scan')
   off()
 }
-offSettings()
 
 // ── 4 + 5. routes over a fake webServer ─────────────────────────────────────
 
@@ -573,12 +568,9 @@ function makeRequest({ method = 'GET', url = '/', headers = {}, chunks }) {
 }
 
 const server = makeFakeServer()
-const routeSettings = makeFakeSettings()
-const routeZ = makeFakeZ()
+const routeSettings = makeFakeSettings({ [SETTINGS_NS]: { sourcePath: fixtureRoot } })
 const routeCatalog = createCatalog()
-mountImporterSettings(routeSettings, routeZ, routeCatalog)
 const offRoutes = mountImporterRoutes({ webServer: server, settings: routeSettings }, { catalog: routeCatalog })
-await routeSettings.update(SETTINGS_NS, { sourcePath: fixtureRoot })
 
 assert.deepEqual([...server.routes.keys()].sort(), [
   'exact /dsh-workbuddy-expert/api/avatar',
@@ -733,27 +725,33 @@ offRoutesTwo()
 rmSync(fixtureRoot, { recursive: true, force: true })
 rmSync(OUTSIDE_DIR, { recursive: true, force: true })
 
-// ── 6. mountImporter end-to-end, only when a real harness resolves ─────────
+// ── 6. mountImporter end-to-end (always runnable: no schemastery needed) ────
 
-try {
+{
   const { mountImporter } = await import(join(root, 'src', 'importer', 'index.js'))
   const harnessServer = makeFakeServer()
-  const harnessSettings = makeFakeSettings()
+  const harnessSettings = makeFakeSettings({})
+  const volatile = { current: fixtureRoot }
+  const config = { sourcePath: { get: () => volatile.current } }
+  const listeners = new Map()
   const fakeCtx = {
+    on: (event, listener) => { listeners.set(event, listener); return () => listeners.delete(event) },
     webServer: harnessServer,
     settings: harnessSettings,
     get: (name) => (name === 'webServer' ? harnessServer : name === 'settings' ? harnessSettings : undefined),
   }
-  const dispose = await mountImporter(fakeCtx)
-  assert.equal(harnessSettings.describe()[0]?.ns, 'workbuddy-expert', 'mountImporter registered the settings namespace')
-  assert.equal(harnessServer.routes.size, 4, 'mountImporter registered every route through the real catalog')
+  const dispose = await mountImporter(fakeCtx, { config, expertsRoot: join(root, '.smoke-tmp-experts') })
+  assert.equal(harnessServer.routes.size, 7, 'mountImporter registered every route (4 read-only + 3 engine) through the real catalog')
+  assert.equal(typeof listeners.get('loader/volatile-update'), 'function', 'mountImporter subscribed the volatile watcher')
+  // The config fallback read answers the scan path even with NO settings row.
+  const stateRoute = harnessServer.routes.get('exact /dsh-workbuddy-expert/api/state')
+  const res = makeResponse()
+  await stateRoute.handler(makeRequest({ url: '/dsh-workbuddy-expert/api/state' }), res)
+  assert.equal(res.status, 200)
+  assert.equal(JSON.parse(res.body).sourcePath, fixtureRoot, 'the volatile config ref answers reads without a settings form row')
   dispose()
   assert.equal(harnessServer.routes.size, 0, 'the mountImporter disposer drops every route')
-} catch (error) {
-  // Outside a dsh host the schemastery resolver cannot resolve — the
-  // layered tier list is by design a hard error there. This section
-  // reports when a harness is present, it never gates.
-  if (!/cannot resolve @deepseek-ai\/schemastery/.test(String(error.message))) throw error
+  assert.equal(listeners.has('loader/volatile-update'), false, 'the disposer detaches the volatile watcher')
 }
 
 console.log('smoke-importer: all checks passed')

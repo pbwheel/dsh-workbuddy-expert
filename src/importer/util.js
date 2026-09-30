@@ -25,10 +25,11 @@ export function errorMessage(error) {
  * hard dependency of the importer and must never silently degrade.
  */
 
+import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { dirname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const SCHEMAMASTERY_SPECIFIER = '@deepseek-ai/schemastery'
 
@@ -37,8 +38,26 @@ async function importFromPath(path) {
   return (await import(pathToFileURL(path).href)).default
 }
 
-/** Candidate anchor files for `createRequire`, in tier order. */
-function anchorFiles() {
+/**
+ * Profile-root anchors discovered by walking up from THIS module's own
+ * location: a hoisted profile installs the plugin flat under
+ * `<profile>/node_modules/…`, so the first ancestor carrying a
+ * `pnpm-workspace.yaml` (or a bare `package.json` with one) is the
+ * profile root whose node_modules the walk-up resolution below uses.
+ */
+function selfAnchors() {
+  const anchors = []
+  let dir = dirname(fileURLToPath(import.meta.url))
+  for (let i = 0; i < 12 && dir !== dirname(dir); i += 1) {
+    anchors.push(join(dir, 'package.json'))
+    if (existsSync(join(dir, 'pnpm-workspace.yaml'))) break
+    dir = dirname(dir)
+  }
+  return anchors
+}
+
+/** Harness-maintained anchors: `$DSH_HOME` profiles and the running process. */
+function hostAnchors() {
   const anchors = []
   if (typeof process.env.DSH_HOME === 'string' && process.env.DSH_HOME !== '') {
     anchors.push(join(process.env.DSH_HOME, 'profiles', 'package.json'))
@@ -52,6 +71,9 @@ function anchorFiles() {
 
 /**
  * Resolve the schemastery factory the settings schema is built with.
+ * Tier order: the plugin's own declared dependency (a profile install
+ * resolves it through its node_modules), then profile/self anchors for
+ * `link:`-style layouts, then the harness-maintained locations.
  * @returns {Promise<import('@deepseek-ai/schemastery')>} the `z` factory
  * @throws when no tier can provide the package (with tier diagnostics)
  */
@@ -64,7 +86,7 @@ export async function resolveSchemastery() {
   } catch (error) {
     attempts.push(`plain import: ${errorMessage(error)}`)
   }
-  for (const anchor of anchorFiles()) {
+  for (const anchor of [...selfAnchors(), ...hostAnchors()]) {
     try {
       const require = createRequire(anchor)
       const resolved = require.resolve(SCHEMAMASTERY_SPECIFIER)

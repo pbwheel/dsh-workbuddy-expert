@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![DSH Web Plugin](https://img.shields.io/badge/DSH%20Web-Plugin-0f766e.svg)](#installation)
-[![Zero build](https://img.shields.io/badge/Build-zero%20build%2C%20zero%20deps-0f766e.svg)](#development)
+[![Zero build](https://img.shields.io/badge/Build-zero%20build-0f766e.svg)](#development)
 
 </div>
 
@@ -85,7 +85,7 @@ dsh plugin --profile web add .
 dsh --profile web --dump-config
 ```
 
-`dsh-workbuddy-expert` should appear in the config dump. Then **restart `dsh web`** (the bundle list is read at startup only) and **hard-refresh the browser**. Zero build, zero runtime dependencies.
+`dsh-workbuddy-expert` should appear in the config dump. Then **restart `dsh web`** (the bundle list is read at startup only) and **hard-refresh the browser**. Zero build; the only runtime dependency is the host's own schema factory, @deepseek-ai/schemastery (exact-pinned).
 
 ### Ask an agent to install it
 
@@ -107,7 +107,7 @@ The command line works too: `/expert` lists all experts, `/expert <name>` switch
 
 | Option | Default | Purpose |
 |---|---|---|
-| `sourcePath` | `~/.workbuddy/plugins/marketplaces/experts/plugins` | WorkBuddy source directory; editable in the market-page topbar or settings (ns `workbuddy-expert`). The tilde is stored verbatim and expanded on use; a nonexistent path may be saved (the page shows a notice until it exists) |
+| `sourcePath` | `~/.workbuddy/plugins/marketplaces/experts/plugins` | WorkBuddy source directory; editable in the market-page topbar or the plugin entry's own settings form (entry id `dsh-workbuddy-expert`). The tilde is stored verbatim and expanded on use; a nonexistent path may be saved (the page shows a notice until it exists) |
 | `roots` | — | Optional extra discovery roots; explicit `trust: user` required |
 | `dshHome` | `$DSH_HOME` or `~/.dsh` | Overrides DSH home resolution |
 
@@ -126,10 +126,11 @@ Per-file fingerprints trigger automatic rescans; the Refresh button forces one.
 ## Development
 
 ```sh
-node scripts/smoke.mjs            # contract/sanitize/registry/switch smoke, zero deps
+node scripts/smoke.mjs            # contract/sanitize/registry/switch smoke
 node scripts/smoke-client.mjs     # client side
 node scripts/smoke-importer.mjs   # importer/market routes
 node scripts/smoke-install.mjs    # install=export pipeline
+node scripts/verify-host-contract.mjs  # Config/volatile chain against real host packages
 ```
 
 Host-side changes (`src/`, `package.json`) need a `dsh web` restart; client-only changes (`client/client.js`) take effect on page refresh.
