@@ -18,11 +18,19 @@
  *      refetch moves the ✓), no-session pick → STAGED draft (no POST),
  *      and the moment a session id appears the /api/after-create
  *      handshake fires EXACTLY ONCE and consumes the draft;
- *   5. apply(): BOTH seat registrations (conversation.input.left selector +
- *      settings.section market page, ticket 08), the two scoped
+ *   5. apply(): ALL THREE seat registrations (conversation.input.left
+ *      selector + settings.section market page, ticket 08, + the keyed
+ *      plugins.row.config cell under `<package>#<rowId>`), the three scoped
  *      <style data-plugin> tags (one namespace per feature) injected after
  *      the registrations and removed by the returned disposer (re-apply is
  *      idempotent);
+ *   5b. the row-config component machine (plugins.row.config dispatch):
+ *      summary/page view split, formless degradation, the editor over a
+ *      scripted form binding — save mutates {op:'set',path:['sourcePath']}
+ *      with the form's revision, refused writes surface the racing-writer
+ *      notice, override states offer Reset ({op:'unset'}), undiverged
+ *      drafts re-adopt host value moves while diverged ones survive them,
+ *      read-only forms disable the input, wire failures surface messages;
  *   6. selector routes (src/selector-routes.js) over a fake webServer:
  *      GET /api/experts shape (+?sessionId → currentExpertId via
  *      stateOf), POST /api/switch and /api/after-create bodies and
@@ -677,15 +685,19 @@ function makeDocumentStub() {
   const renderedBySeat = new Map()
   const slots = {
     inject(seat, setup) {
-      assert.ok(['conversation.input.left', 'settings.section'].includes(seat),
+      assert.ok(['conversation.input.left', 'settings.section', 'plugins.row.config'].includes(seat),
         `known seat: ${seat}`)
       seatSetups.set(seat, setup)
       const off = setup() // the runtime runs the setup at inject time
       return () => { seatSetups.delete(seat); if (typeof off === 'function') off() }
     },
     register(definition, render) {
-      assert.equal(definition.name, seatSetups.has('settings.section') && definition.id === 'workbuddy-expert' && definition.name === 'settings.section'
-        ? 'settings.section' : definition.name)
+      assert.ok(['conversation.input.left', 'settings.section', 'plugins.row.config'].includes(definition.name),
+        `known slot name: ${definition.name}`)
+      if (definition.name === 'plugins.row.config') {
+        assert.equal(definition.key, 'dsh-workbuddy-expert#dsh-workbuddy-expert',
+          'the row-config cell is keyed by package#rowId as the patch declares')
+      }
       renderedBySeat.set(definition.name, render)
       return () => renderedBySeat.delete(definition.name)
     },
@@ -698,12 +710,16 @@ function makeDocumentStub() {
   assert.equal(typeof seatSetups.get('settings.section') === 'function' &&
     typeof renderedBySeat.get('settings.section') === 'function', true,
     'the settings.section seat registered (ticket 08)')
+  assert.equal(typeof seatSetups.get('plugins.row.config') === 'function' &&
+    typeof renderedBySeat.get('plugins.row.config') === 'function', true,
+    'the plugins.row.config keyed seat registered')
 
-  // One style tag per feature namespace: .wbe- selector + .wbx- market.
-  assert.equal(document.tags.length, 2, 'both scoped style tags are injected')
+  // One style tag per feature namespace: .wbe- selector + .wbx- market + .wbr- row config.
+  assert.equal(document.tags.length, 3, 'all three scoped style tags are injected')
   assert.ok(document.tags.every((tag) => tag.dataset.plugin === 'dsh-workbuddy-expert'))
   assert.ok(document.tags.some((tag) => tag.textContent.includes('.wbe-btn')), 'the selector CSS rides one tag')
-  assert.ok(document.tags.some((tag) => tag.textContent.includes('.wbx-chip')), 'the market CSS rides the other tag')
+  assert.ok(document.tags.some((tag) => tag.textContent.includes('.wbx-chip')), 'the market CSS rides another tag')
+  assert.ok(document.tags.some((tag) => tag.textContent.includes('.wbr-input')), 'the row-config CSS rides the third tag')
 
   const tree = renderedBySeat.get('conversation.input.left')({ session: { id: 's' } })
   assert.equal(tree.type, mod.ExpertSelector, 'the composer seat renders the selector component')
@@ -712,16 +728,142 @@ function makeDocumentStub() {
   const page = renderedBySeat.get('settings.section')()
   assert.equal(page.type, mod.MarketPage, 'the settings seat renders the market page')
 
+  const rowSummary = renderedBySeat.get('plugins.row.config')({ view: 'summary' })
+  assert.equal(rowSummary.type, mod.RowConfigPage, 'the keyed seat renders the row-config component')
+  assert.equal(rowSummary.props.view, 'summary', 'the dispatch view rides the props')
+
   dispose()
-  assert.equal(document.tags.length, 0, 'the disposer removes both style tags')
+  assert.equal(document.tags.length, 0, 'the disposer removes every style tag')
   assert.equal(renderedBySeat.size, 0, 'the disposer drops every slot registration')
 
   // Re-apply after dispose is idempotent (fresh tags, fresh registrations).
   const dispose2 = mod.apply(ctx)
-  assert.equal(document.tags.length, 2)
+  assert.equal(document.tags.length, 3)
   dispose2()
   assert.equal(document.tags.length, 0)
   delete sandbox.document
+}
+
+// ── 5b. the row configuration component machine ─────────────────────────────
+
+// The notice-fade effect needs timers in the vm realm (inert stubs — the
+// fade itself is not under test here).
+sandbox.setTimeout = () => 0
+sandbox.clearTimeout = () => {}
+
+{
+  const inputOf = (tree) => findAll(tree, (node) => node.type === 'input' && node.props.className === 'wbr-input')[0]
+  const buttonByLabel = (tree, label) =>
+    findAll(tree, (node) => node.type === 'button' && textOf(node) === label)[0]
+  const noticeOf = (tree) => findAll(tree, (node) => node?.props?.className === 'wbr-notice')[0]
+
+  // The dispatch views.
+  assert.equal(textOf(mod.RowConfigPage({ t, view: 'summary' })), 'WorkBuddy 专家源目录与导入设置',
+    'the summary view renders the fallback description line')
+  assert.ok(String(textOf(expandTree(mod.RowConfigPage({ t, view: 'page' }))[0])).includes('配置表单不可用'),
+    'the page view without a form degrades to the unavailable note')
+  assert.ok(String(textOf(expandTree(mod.RowConfigPage({ t, view: 'page', formOverride: { state: { status: 'idle' }, mutate() {} } }))[0]))
+    .includes('正在读取配置'), 'an idle form state renders the loading note')
+
+  // The editor machine over a scripted form binding. RowConfigForm renders
+  // DIRECTLY (persistent hook instance — expandTree's throwaway context
+  // would reset useState every expansion).
+  const mutateCalls = []
+  const makeForm = (state, answer = true) => ({
+    state,
+    mutate(ops, revision) {
+      mutateCalls.push({ ops, revision })
+      return answer === 'reject' ? Promise.reject(new Error('wire down')) : Promise.resolve(answer)
+    },
+  })
+  const DEFAULT = '~/.workbuddy/plugins/marketplaces/experts/plugins'
+  const readyState = (over = {}) => ({
+    status: 'ready', revision: 3, writable: true,
+    value: { sourcePath: DEFAULT }, base: { sourcePath: DEFAULT }, user: {},
+    ...over,
+  })
+
+  const view = renderComponent(mod.RowConfigForm, { t, form: makeForm(readyState()) })
+  let tree = view.tree()
+  assert.equal(inputOf(tree).props.value, DEFAULT, 'the draft seeds from the live value')
+  assert.equal(buttonByLabel(tree, '保存').props.disabled, true, 'save is disabled while the draft matches the value')
+  assert.equal(buttonByLabel(tree, '恢复默认'), undefined, 'no reset button without a user override')
+  assert.ok(textOf(tree).includes(DEFAULT), 'the hint names the default path')
+
+  // Typing diverges: save enables, click → set op with the form's revision.
+  inputOf(tree).props.onChange({ target: { value: '~/summoned' } })
+  view.rerender()
+  tree = view.tree()
+  assert.equal(buttonByLabel(tree, '保存').props.disabled, false, 'save enables on divergence')
+  buttonByLabel(tree, '保存').props.onClick()
+  view.rerender()
+  await flush()
+  view.rerender()
+  tree = view.tree()
+  assert.equal(JSON.stringify(mutateCalls[0].ops), JSON.stringify([{ op: 'set', path: ['sourcePath'], value: '~/summoned' }]),
+    'save mutates the sourcePath field')
+  assert.equal(mutateCalls[0].revision, 3, 'the mutation carries the form revision for conflict protection')
+  assert.equal(noticeOf(tree)?.props['data-kind'], 'ok', 'an accepted write shows the ok notice')
+
+  // A refused write (conflict/recovery) shows the error notice.
+  mutateCalls.length = 0
+  const conflictView = renderComponent(mod.RowConfigForm, { t, form: makeForm(readyState(), false) })
+  let ctree = conflictView.tree()
+  inputOf(ctree).props.onChange({ target: { value: '~/other' } })
+  conflictView.rerender()
+  buttonByLabel(conflictView.tree(), '保存').props.onClick()
+  await flush()
+  conflictView.rerender()
+  ctree = conflictView.tree()
+  assert.equal(noticeOf(ctree)?.props['data-kind'], 'error', 'a refused write shows the error notice')
+  assert.ok(String(textOf(noticeOf(ctree))).includes('其他页面修改'), 'the refusal names the racing-writer cause')
+
+  // An override state offers Reset; clicking unsets the user override.
+  mutateCalls.length = 0
+  const overrideState = readyState({ value: { sourcePath: '~/custom' }, user: { sourcePath: '~/custom' } })
+  const resetView = renderComponent(mod.RowConfigForm, { t, form: makeForm(overrideState) })
+  let rtree = resetView.tree()
+  const resetButton = buttonByLabel(rtree, '恢复默认')
+  assert.ok(resetButton !== undefined, 'a user override offers the reset button')
+  resetButton.props.onClick()
+  await flush()
+  resetView.rerender()
+  assert.equal(JSON.stringify(mutateCalls[0].ops), JSON.stringify([{ op: 'unset', path: ['sourcePath'] }]),
+    'reset unsets the override')
+  assert.equal(noticeOf(resetView.tree())?.props['data-kind'], 'ok')
+
+  // A non-diverged draft re-adopts host-side value moves (market-page parity).
+  const adoptView = renderComponent(mod.RowConfigForm, { t, form: makeForm(readyState()) })
+  adoptView.setProps({ form: makeForm(readyState({ value: { sourcePath: '~/moved-elsewhere' }, revision: 4 })) })
+  adoptView.rerender()
+  assert.equal(inputOf(adoptView.tree()).props.value, '~/moved-elsewhere',
+    'an undiverged draft follows the host value')
+
+  // A diverged draft survives the same move (no clobber).
+  const keepView = renderComponent(mod.RowConfigForm, { t, form: makeForm(readyState()) })
+  inputOf(keepView.tree()).props.onChange({ target: { value: '~/mine' } })
+  keepView.rerender()
+  keepView.setProps({ form: makeForm(readyState({ value: { sourcePath: '~/moved-elsewhere' }, revision: 4 })) })
+  keepView.rerender()
+  assert.equal(inputOf(keepView.tree()).props.value, '~/mine',
+    'a diverged draft is never clobbered by a host value move')
+
+  // Read-only form: disabled input + the override note.
+  const roView = renderComponent(mod.RowConfigForm, { t, form: makeForm(readyState({ writable: false })) })
+  const roTree = roView.tree()
+  assert.equal(inputOf(roTree).props.disabled, true, 'a read-only form disables the input')
+  assert.ok(String(textOf(roTree)).includes('不允许在此编辑'), 'the read-only note renders')
+
+  // A rejected mutation surfaces its message.
+  mutateCalls.length = 0
+  const failView = renderComponent(mod.RowConfigForm, { t, form: makeForm(readyState(), 'reject') })
+  inputOf(failView.tree()).props.onChange({ target: { value: '~/x' } })
+  failView.rerender()
+  buttonByLabel(failView.tree(), '保存').props.onClick()
+  await flush()
+  failView.rerender()
+  assert.ok(String(textOf(noticeOf(failView.tree()))).includes('wire down'),
+    'a wire failure surfaces the error message')
 }
 
 // ── 6. selector routes over a fake webServer ─────────────────────────────────

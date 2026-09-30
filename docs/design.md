@@ -261,3 +261,35 @@ schema 也永不丢失（verify-host-contract.mjs 断言）。
 真包（schemastery@3.18.4 / cordis@4.0.4 resolveConfig / cosmokit@1.8.5 volatileEntries+
 updateVolatile）跑通「Config → resolveConfig → volatile ref → commit → readSourcePath」
 全链；安装副本（desktop profile hoisted node_modules）tier-1 加载实测 Config 就位。
+
+## 14. plugins.row.config 原生行配置页（2026-09-30 第二轮）
+
+**动机**：0.2 迁移后 `sourcePath` 只有市场页一个编辑入口；原生设置的 auto 表单
+"尚无内置客户端渲染"（dsh-settings README），且我们按规范注册了
+`configure({ auto: false })` —— 原生侧原本没有任何配置界面。
+
+**契约（对照 ui-plugin-manager / ui-settings / ui-renderer 源码求证）**：
+
+- Plugins 页在其 `main#plugins` 注册下声明子槽 `plugins.row.config`（keyed，
+  scope root）；行卡片的「配置」控件与行详情页均按 ledger 中的键
+  `<package>#<rowId>`（= `dsh-workbuddy-expert#dsh-workbuddy-expert`）出现。
+- 分发两处（ownerProps 直达注册组件，owner 优先合并）：
+  `view:'summary'`（行头描述回退，仅当行无本地化描述时渲染）与
+  `view:'page' + form`（行配置页主体）。
+- `form` 来自页面自己的 configForms 接线（ui-settings 的 ConfigForms 服务：
+  `get(entryId)` → `{ state: { status, revision, value, base, user, writable },
+  mutate(ops, revision) }`），写经 `ctx.remote.settings.mutate` →
+  settingsController → configEditor → profile patch → Loader volatile 提交 ——
+  与市场页 `/api/config` 殊途同归，宿主 `mountVolatileWatch` 让两侧自动同步。
+  本组件因此零自建网络代码；模块 inject 维持 `['slots','locale']`。
+
+**实现**（client/client.js 第三个声音，.wbr- 命名空间）：
+RowConfigPage 按 view 分发（无 form → 不可用说明）；RowConfigForm 为编辑器 ——
+保存 `{op:'set',path:['sourcePath']}` 带表单 revision（冲突 → 恢复读取 + 重试
+提示）、覆盖态提供 `{op:'unset'}` 恢复默认、只读态禁用输入、草稿采用市场页的
+syncedRef 纪律（未分歧跟随宿主值移动、分歧不被打断）。注册
+`slots.inject('plugins.row.config', …)` 机会主义挂载（无 ui-plugin-manager 时
+座位不声明、注册静默等待）。
+
+**验证**：smoke-client §5 升级为三座位/三样式标签断言 + 新 §5b 组件机
+（保存/拒绝/重置/收养/防覆写/只读/断线七组用例）；五套脚本全绿。

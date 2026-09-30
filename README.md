@@ -119,6 +119,11 @@ dsh --profile web --dump-config
 
 配置走 DSH 0.2 的 **Config 表单模型**：插件导出 schemastery `Config`（`sourcePath` 为 `.volatile()`），设置服务在本插件条目（entry id `dsh-workbuddy-expert`）下投影可编辑表单；保存落到 profile 的 cordis patch，改动经 `loader/volatile-update` 热生效（不重挂插件）。`roots`/`dshHome` 是普通字段，修改后按 Loader 语义重挂。市场页的 `/api/config` 保存即走这条链（revision 冲突保护不变）。
 
+`sourcePath` 有两个编辑入口，同一份数据：
+
+- **设置 → WorkBuddy 专家**（市场页顶栏，`settings.section` 座位）；
+- **插件 → dsh-workbuddy-expert → 配置**（Plugins 页的原生行配置页，`plugins.row.config` keyed 座位，键 `dsh-workbuddy-expert#dsh-workbuddy-expert`）——表单由页面的 configForms 绑定驱动（revision 冲突保护、恢复默认），无自建网络代码，两侧经宿主 volatile 链路自动同步。
+
 追加根示例：
 
 ```yaml

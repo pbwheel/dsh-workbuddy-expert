@@ -131,6 +131,11 @@ Extra-root example:
 
 Per-file fingerprints trigger automatic rescans; the Refresh button forces one.
 
+`sourcePath` has two editing entrances over the same data:
+
+- **Settings → WorkBuddy Experts** (the market-page topbar, `settings.section` seat);
+- **Plugins → dsh-workbuddy-expert → Configure** (the Plugins page's native row config page, the keyed `plugins.row.config` seat under `dsh-workbuddy-expert#dsh-workbuddy-expert`) — the form rides the page's own configForms binding (revision conflict protection, reset-to-default) with zero network code here; the two views stay in step through the host's volatile chain.
+
 ## Development
 
 ```sh

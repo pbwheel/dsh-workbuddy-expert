@@ -405,6 +405,69 @@ function ensureMarketStyle () {
   return tag
 }
 
+// ── the Plugins-page row configuration (plugins.row.config) ─────────────────
+//
+// A THIRD voice on the same module: the native configuration surface the
+// Plugins page (ui-plugin-manager) offers for one declared row. The page
+// dispatches this keyed slot twice — view:'summary' as the row detail
+// header's description fallback, view:'page' with a `form` binding inside
+// the row's config page. The form comes from the page's own configForms
+// wiring (state = the entry form's snapshot { status, revision, value,
+// base, user, writable }, mutate = revision-guarded SettingsPathOp queue
+// through ctx.remote.settings), so this surface needs NO network code of
+// its own: writes ride the same 0.2 Config/volatile chain the market page
+// uses, and the host's volatile watch keeps both views in step.
+
+/** The keyed slot's cell: `<package name>#<row id>` as the patch declares. */
+var ROW_CONFIG_KEY = 'dsh-workbuddy-expert#dsh-workbuddy-expert'
+
+/** The row-config style namespace (.wbr-), its own tag like its siblings. */
+var ROW_CONFIG_CSS = `
+.wbr-card { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px;
+  border: 1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.2));
+  background: var(--dsw-alias-bg-layer-1, transparent); max-width: 560px; }
+.wbr-label { font-size: 13px; font-weight: 600; color: var(--dsw-alias-label-primary, inherit); }
+.wbr-hint { font-size: 12px; line-height: 1.6; color: var(--dsw-alias-label-tertiary, inherit); margin: 0; }
+.wbr-hint code { font-family: ${MONO}; font-size: 11px; }
+.wbr-row { display: flex; gap: 8px; align-items: center; }
+.wbr-input { flex: 1 1 auto; min-width: 0; box-sizing: border-box; height: 32px; padding: 0 10px;
+  font-size: 12px; font-family: ${MONO}; border-radius: 8px; color: var(--dsw-alias-label-primary, inherit);
+  border: 1px solid var(--dsw-alias-border-inverted, rgba(127,127,127,.35));
+  background: var(--dsw-alias-bg-layer-2, transparent); }
+.wbr-input:focus { border-color: var(--dsw-alias-brand-primary, currentColor); outline: none; }
+.wbr-input:disabled { opacity: .6; }
+.wbr-input::placeholder { color: var(--dsw-alias-label-tertiary, inherit); }
+.wbr-btn { display: inline-flex; align-items: center; height: 32px; padding: 0 14px; border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-inverted, rgba(127,127,127,.35)); cursor: pointer;
+  background: transparent; color: var(--dsw-alias-label-primary, inherit); font-size: 12px; font-weight: 500;
+  white-space: nowrap; }
+.wbr-btn:hover:not(:disabled) { background: var(--dsw-interactive-bg-hover, rgba(127,127,127,.12)); }
+.wbr-btn:disabled { opacity: .55; cursor: default; }
+.wbr-btn[data-primary="true"] { background: var(--dsw-alias-brand-primary, #4f6ef7);
+  border-color: transparent; color: var(--dsw-alias-brand-contrast, #fff); }
+.wbr-btn[data-primary="true"]:hover:not(:disabled) { filter: brightness(1.05); background: var(--dsw-alias-brand-primary, #4f6ef7); }
+.wbr-btn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, currentColor); outline-offset: 2px; }
+.wbr-note { font-size: 12px; line-height: 1.6; color: var(--dsw-alias-label-secondary, inherit); margin: 0; }
+.wbr-notice { font-size: 12px; line-height: 1.5; margin: 0; }
+.wbr-notice[data-kind="ok"] { color: var(--dsw-alias-state-success-primary, #2e9e5b); }
+.wbr-notice[data-kind="error"] { color: var(--dsw-alias-state-error-primary, #d5484f); }
+.wbr-summary { font-size: 12px; color: var(--dsw-alias-label-secondary, inherit); }
+@media (prefers-reduced-motion: reduce) { .wbr-btn { transition: none; } }
+`
+
+/** The row-config stylesheet twin of ensureMarketStyle(). */
+function ensureRowConfigStyle () {
+  if (typeof document === 'undefined' || document === null) return null
+  var tagId = NS + '/row-config.css'
+  if (document.querySelector('style[data-plugin-css="' + tagId + '"]') !== null) return null
+  var tag = document.createElement('style')
+  tag.dataset.plugin = NS
+  tag.dataset.pluginCss = tagId
+  tag.textContent = ROW_CONFIG_CSS
+  document.head.appendChild(tag)
+  return tag
+}
+
 var React = require('react')
 var el = React.createElement
 
@@ -501,7 +564,22 @@ var DICTS = {
     groupMembers: '成员 {shown}/{total}',
     installedCount: '已装 {n}',
     updatableCount: '可更新 {n}',
-    brokenCount: '损坏 {n}'
+    brokenCount: '损坏 {n}',
+    // ── the Plugins-page row configuration (plugins.row.config) ─────────────
+    rowConfigSummary: 'WorkBuddy 专家源目录与导入设置',
+    rowConfigUnavailable: '配置表单不可用：需要本插件处于启用状态且其 Config 架构已加载（DSH 0.2 设置模型）。',
+    rowConfigLoading: '正在读取配置…',
+    rowConfigLabel: 'WorkBuddy 专家源目录',
+    rowConfigHint: 'WorkBuddy 桌面端「召唤」专家后落盘的本地目录，市场页从这里扫描。默认 {path}；开头 ~ 会原样保存、使用时展开。',
+    rowConfigSave: '保存',
+    rowConfigSaving: '保存中…',
+    rowConfigSaved: '已保存。改动即时生效，市场页会自动刷新。',
+    rowConfigConflict: '保存失败：配置已被其他页面修改。表单已同步为最新值，请确认后重试。',
+    rowConfigFailed: '保存失败：{message}',
+    rowConfigReset: '恢复默认',
+    rowConfigResetDone: '已恢复默认源目录。',
+    rowConfigReadonly: '当前配置层不允许在此编辑（更高优先级的配置覆盖了本条目）。',
+    rowConfigEmpty: '源目录不能为空。'
   },
   en: {
     buttonLabel: 'Expert',
@@ -592,7 +670,22 @@ var DICTS = {
     groupMembers: '{shown}/{total} members',
     installedCount: '{n} installed',
     updatableCount: '{n} updatable',
-    brokenCount: '{n} broken'
+    brokenCount: '{n} broken',
+    // ── the Plugins-page row configuration (plugins.row.config) ─────────────
+    rowConfigSummary: 'WorkBuddy expert source directory and import settings',
+    rowConfigUnavailable: 'Configuration form unavailable: the plugin must be enabled with its Config schema loaded (DSH 0.2 settings model).',
+    rowConfigLoading: 'Loading configuration…',
+    rowConfigLabel: 'WorkBuddy expert source directory',
+    rowConfigHint: 'The local directory the WorkBuddy desktop app materializes experts into after you summon them; the market page scans it. Default {path}; a leading ~ is stored verbatim and expanded on use.',
+    rowConfigSave: 'Save',
+    rowConfigSaving: 'Saving…',
+    rowConfigSaved: 'Saved. The change applies immediately and the market page refreshes itself.',
+    rowConfigConflict: 'Save failed: the configuration changed in another view. The form has synced to the latest values — review and retry.',
+    rowConfigFailed: 'Save failed: {message}',
+    rowConfigReset: 'Reset to default',
+    rowConfigResetDone: 'Restored the default source directory.',
+    rowConfigReadonly: 'The active configuration layer does not allow editing here (a higher-priority layer overrides this entry).',
+    rowConfigEmpty: 'The source directory cannot be empty.'
   }
 }
 
@@ -2155,6 +2248,184 @@ function MarketPage (props) {
       : null)
 }
 
+// ── the row configuration component (plugins.row.config dispatch) ───────────
+
+/**
+ * The row-config surface: one component covers both dispatch views the
+ * Plugins page makes (ownerProps win in the slot's prop merge, so view and
+ * form arrive as plain props beside this registration's own inject):
+ *
+ *   view:'summary' → the row detail header's description fallback (rendered
+ *                    ONLY when the row carries no localized description);
+ *   view:'page'    → the config page body. form is undefined when the page
+ *                    sees no settings form for this entry (inactive entry /
+ *                    Config not loaded) — degrade to an explanatory note.
+ *
+ * Optional `formOverride`/`initialStatus` seams (undefined in production)
+ * let the offline smoke drive the machine without a live configForms.
+ */
+function RowConfigPage (props) {
+  var t = props.t
+  if (props.view !== 'page') {
+    return el('span', { className: 'wbr-summary' }, t('rowConfigSummary'))
+  }
+  var form = props.form ?? props.formOverride
+  if (form === undefined || form === null) {
+    return el('p', { className: 'wbr-note' }, t('rowConfigUnavailable'))
+  }
+  return el(RowConfigForm, { t: t, form: form })
+}
+
+/**
+ * The sourcePath editor bound to the page-supplied form (configForms):
+ * state = { status, revision, value, base, user, writable }, mutate =
+ * (ops, expectedRevision) → Promise<boolean>. Save sets the field, Reset
+ * unsets the user override (falling back to the schema default). The
+ * syncedRef draft discipline is the market page's: host-side value moves
+ * re-adopt the draft ONLY while the user has not diverged, so a racing
+ * save from the market page never clobbers an in-progress edit here.
+ */
+function RowConfigForm (props) {
+  var t = props.t
+  var form = props.form
+  var state = form.state !== undefined && form.state !== null ? form.state : { status: 'idle' }
+  var ready = state.status === 'ready'
+  var readonly = state.writable === false
+
+  var currentPath = ready && state.value !== null && typeof state.value === 'object' &&
+    typeof state.value.sourcePath === 'string' ? state.value.sourcePath : ''
+  var defaultPath = ready && state.base !== null && typeof state.base === 'object' &&
+    typeof state.base.sourcePath === 'string' ? state.base.sourcePath : ''
+  var hasOverride = ready && state.user !== null && typeof state.user === 'object' &&
+    typeof state.user.sourcePath === 'string'
+
+  var draftState = React.useState(currentPath)
+  var draft = draftState[0]
+  var setDraft = draftState[1]
+  var syncedRef = React.useRef(currentPath)
+  var draftRef = React.useRef(currentPath)
+  draftRef.current = draft
+
+  var savingState = React.useState(false)
+  var saving = savingState[0]
+  var setSaving = savingState[1]
+
+  var noticeState = React.useState(null)
+  var notice = noticeState[0]
+  var setNotice = noticeState[1]
+
+  // Host value moves re-adopt the draft while it has not diverged.
+  React.useEffect(function () {
+    if (draftRef.current === syncedRef.current) {
+      draftRef.current = currentPath
+      syncedRef.current = currentPath
+      setDraft(currentPath)
+    }
+  }, [currentPath])
+
+  // Success notices fade; errors stay until the next action.
+  React.useEffect(function () {
+    if (notice === null || notice.kind !== 'ok') return undefined
+    var timer = setTimeout(function () { setNotice(null) }, 6000)
+    return function () { clearTimeout(timer) }
+  }, [notice])
+
+  function onDraftChange (event) {
+    var next = event.target.value
+    draftRef.current = next
+    setDraft(next)
+    if (notice !== null) setNotice(null)
+  }
+
+  /** One revision-guarded mutation through the page's form queue. */
+  function runMutate (ops, appliedValue) {
+    var revision = typeof state.revision === 'number' ? state.revision : undefined
+    setSaving(true)
+    setNotice(null)
+    return Promise.resolve()
+      .then(function () { return form.mutate(ops, revision) })
+      .then(function (accepted) {
+        setSaving(false)
+        if (accepted === true) {
+          syncedRef.current = appliedValue
+          setNotice({ kind: 'ok', text: ops[0].op === 'unset' ? t('rowConfigResetDone') : t('rowConfigSaved') })
+        } else {
+          setNotice({ kind: 'error', text: t('rowConfigConflict') })
+        }
+        return accepted === true
+      }, function (error) {
+        setSaving(false)
+        setNotice({ kind: 'error', text: t('rowConfigFailed', { message: errorOf(error) }) })
+        return false
+      })
+  }
+
+  function onSave () {
+    if (saving || readonly) return
+    var next = strOf(draft)
+    if (next === '') {
+      setNotice({ kind: 'error', text: t('rowConfigEmpty') })
+      return
+    }
+    if (next === currentPath) return
+    runMutate([{ op: 'set', path: ['sourcePath'], value: next }], next)
+  }
+
+  function onReset () {
+    if (saving || readonly || !hasOverride) return
+    runMutate([{ op: 'unset', path: ['sourcePath'] }], draftRef.current)
+  }
+
+  if (!ready) {
+    return el('div', { className: 'wbr-card' },
+      el('p', { className: 'wbr-note' },
+        state.status === 'unavailable' ? t('rowConfigUnavailable') : t('rowConfigLoading')))
+  }
+
+  return el('div', { className: 'wbr-card' },
+    el('span', { className: 'wbr-label' }, t('rowConfigLabel')),
+    el('p', { className: 'wbr-hint' },
+      t('rowConfigHint', { path: defaultPath !== '' ? defaultPath : '~/.workbuddy/plugins/marketplaces/experts/plugins' })),
+    el('div', { className: 'wbr-row' },
+      el('input', {
+        className: 'wbr-input',
+        type: 'text',
+        value: draft,
+        placeholder: defaultPath,
+        'aria-label': t('rowConfigLabel'),
+        disabled: saving || readonly,
+        onChange: onDraftChange
+      }),
+      el('button', {
+        className: 'wbr-btn', type: 'button', 'data-primary': 'true',
+        disabled: saving || readonly || draft === currentPath,
+        onClick: onSave
+      }, saving ? t('rowConfigSaving') : t('rowConfigSave'))),
+    readonly
+      ? el('p', { className: 'wbr-note' }, t('rowConfigReadonly'))
+      : (hasOverride
+          ? el('div', { className: 'wbr-row' },
+              el('button', {
+                className: 'wbr-btn', type: 'button',
+                disabled: saving,
+                onClick: onReset
+              }, t('rowConfigReset')))
+          : null),
+    notice !== null
+      ? el('p', { className: 'wbr-notice', role: 'status', 'data-kind': notice.kind }, notice.text)
+      : null)
+}
+
+/** One line for thrown values in client error notices. */
+function errorOf (error) {
+  try {
+    return error !== null && typeof error === 'object' && typeof error.message === 'string'
+      ? error.message : String(error)
+  } catch {
+    return '<unrenderable>'
+  }
+}
+
 function apply (ctx) {
   var t = fallbackT
   var locale = ctx.locale
@@ -2243,6 +2514,29 @@ function apply (ctx) {
     })
   }))
 
+  // The Plugins page's native row configuration (keyed cell, the patch's
+  // row id): the row gains a configure control whose page hosts the
+  // sourcePath form over the page's own configForms binding — the 0.2
+  // settings surface beside the market page, zero network code here.
+  // Opportunistic like its siblings: without ui-plugin-manager the seat
+  // never declares and this registration stays pending.
+  collect(slots.inject('plugins.row.config', function () {
+    return slots.register({
+      name: 'plugins.row.config',
+      key: ROW_CONFIG_KEY,
+      locale: NS,
+      inject: function () { return { t: t } }
+    }, function (props) {
+      props = props || {}
+      return el(RowConfigPage, {
+        t: t,
+        view: props.view,
+        form: props.form,
+        formOverride: props.formOverride
+      })
+    })
+  }))
+
   // The scoped style tags are injected only after every registration
   // succeeded (a failed apply must not leak them), and their removal joins
   // the disposers — one namespace per feature, either can ship alone.
@@ -2250,6 +2544,8 @@ function apply (ctx) {
   collect(function () { removeStyle(styleTag) })
   var marketStyleTag = ensureMarketStyle()
   collect(function () { removeStyle(marketStyleTag) })
+  var rowConfigStyleTag = ensureRowConfigStyle()
+  collect(function () { removeStyle(rowConfigStyleTag) })
 
   return function () {
     for (var i = 0; i < disposers.length; i++) disposers[i]()
@@ -2297,5 +2593,11 @@ module.exports.TeamGroup = TeamGroup
 module.exports.OrphanRow = OrphanRow
 module.exports.BrokenRow = BrokenRow
 module.exports.MarketPage = MarketPage
+// The row configuration (plugins.row.config), same loader-tolerant pattern.
+module.exports.ROW_CONFIG_KEY = ROW_CONFIG_KEY
+module.exports.ROW_CONFIG_CSS = ROW_CONFIG_CSS
+module.exports.ensureRowConfigStyle = ensureRowConfigStyle
+module.exports.RowConfigPage = RowConfigPage
+module.exports.RowConfigForm = RowConfigForm
 return module.exports;
 } });
