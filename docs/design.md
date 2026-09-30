@@ -302,3 +302,31 @@ syncedRef 纪律（未分歧跟随宿主值移动、分歧不被打断）。注�
 放行**（浏览器 POST 必带 Origin，缺席即"非页面"，且桌面代理正产生这种形态）；在场 Origin
 必须可解析且等于 Host（`Origin: null`/空串 = 在场但不可解析 → 拒）。冒烟补齐七种形态
 用例（环回别名、rebinding 对、null/空 Origin、代理形态放行等）。
+
+## 15. 2026-09-30 第二轮 review 修复（P1×2）
+
+**#1 fiber 归属（volatile-watch 与 page-policy 双失效）**：对照 0.2.0-rc.2 宿主源码复查发现，
+`mountVolatileWatch`/`mountPagePolicy` 此前挂在 `ctx.inject(['webServer','settings'], …)`
+回调拿到的 **inject 子 fiber 上下文**上，而两个契约都按 **entry fiber** 寻址——
+
+- Loader 的 `_commitVolatile` 以 `self[Context.filter] = owner => owner.fiber === fiber`
+  （entry fiber）派发 `loader/volatile-update`（vendor/loader/src/config/entry.ts），子 fiber
+  上的监听器被过滤，**永不触发**；
+- `settings.configure(presentation, owner)` 按 **fiber 对象**入 presentations Map，而
+  `describe()` 查的是 `entry.fiber`，子 fiber 注册的策略 **永远查不到**（auto 抑制失效）。
+
+用从运行宿主提取的真实 cordis 做了两组实证：entry ctx 监听 1 次 / inject 子 fiber 监听
+0 次；`child fiber === entry fiber: false` → Map MISS。修复：`mountImporter` 新增
+`options.ownerCtx`（插件 apply 根上下文，src/index.js 显式传入），watcher 与 policy 改在
+ownerCtx 上挂载/以 `ownerCtx.fiber` 为 owner；服务查找仍走 injected ctx（双服务在那里
+保证在场）。测试替身可省略 ownerCtx（回退 `ctx`，冒烟即此形态）。修复后以 Loader 的
+**字面过滤谓词**对真实注册钩子求值：旧挂法 `FILTERED OUT`、新挂法 `REACHES loader emit`。
+当前功能影响本就低（缓存键含 sourcePath，路径变更天然重扫；0.2 客户端尚未渲染 auto
+表单），但机制自此与文档一致。
+
+**#2 浏览器 URL 改 document-relative**：shell 注入 `<base href="./">` 且官方内建浏览器
+路由一律 `PATH.slice(1)`（前缀剥离代理挂载约束，2026-09-14 架构注记）。三处 origin-absolute
+URL 改为不带前导斜杠：`client.js` 的 `API_BASE`、registry 卡片的 expert-avatar URL、
+`/api/state` 载荷的 avatarUrl（服务端路由注册仍是绝对 ROUTE_BASE——服务端匹配的是剥前缀
+后的路径）。根部署行为不变；挂载部署下不再 404。冒烟断言同步（fetch 捕获的 url 改相对
+形态，服务端路由用例仍传绝对路径）。

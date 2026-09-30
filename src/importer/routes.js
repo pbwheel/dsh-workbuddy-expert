@@ -178,7 +178,13 @@ function stateCardOf(expert) {
   const { avatarPath, ...card } = expert
   return avatarPath === undefined
     ? card
-    : { ...card, avatarUrl: `${ROUTE_BASE}/api/avatar?id=${expert.id}` }
+    // DOCUMENT-RELATIVE (ROUTE_BASE minus its leading slash): the web
+    // shell pins <base href="./">, so origin-absolute paths break under
+    // prefix-stripping proxy mounts — the browser resolves this against
+    // the document base (the built-ins' `PATH.slice(1)` convention). The
+    // server-side route itself stays registered under the absolute
+    // ROUTE_BASE (the server matches the post-strip path).
+    : { ...card, avatarUrl: `${ROUTE_BASE.slice(1)}/api/avatar?id=${expert.id}` }
 }
 
 /**

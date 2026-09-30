@@ -19,6 +19,13 @@
  * `options.expertsRoot` fixes the export root explicitly (the caller
  * resolves it from the SAME dshHome the discovery roots use, keeping
  * 安装 = 导出 与 discovery 一致).
+ * `options.ownerCtx` is the plugin's ROOT apply context. Fiber identity
+ * matters for two of the mounts: the Loader dispatches
+ * `loader/volatile-update` with an `owner.fiber === entry fiber` filter,
+ * and settings.configure() keys its page policy by the entry FIBER —
+ * neither matches the inject-child fiber this function's `ctx` normally
+ * is, so without ownerCtx those two registrations silently no-op (the
+ * bug fixed 2026-09-30). Test doubles may omit it: the fallback is `ctx`.
  */
 
 import { homedir } from 'node:os'
@@ -35,7 +42,7 @@ import { entryIdOf, mountPagePolicy, mountVolatileWatch } from './settings.js'
  * engine.
  *
  * @param {object} ctx - Cordis plugin context exposing `webServer` + `settings`
- * @param {{config?: object, expertsRoot?: string}} [options]
+ * @param {{config?: object, expertsRoot?: string, ownerCtx?: object}} [options]
  * @returns {Promise<() => void>} disposer dropping every registration
  */
 export async function mountImporter(ctx, options = {}) {
@@ -44,8 +51,13 @@ export async function mountImporter(ctx, options = {}) {
   }
   const ns = entryIdOf(ctx)
   const catalog = createCatalog()
-  const offWatch = mountVolatileWatch(ctx, catalog)
-  const offPolicy = mountPagePolicy(ctx)
+  // Entry-scoped mounts (see the module header): the volatile watcher and
+  // the page policy both key on the ENTRY fiber, so they receive the root
+  // apply context; the policy's service lookup stays on the injected ctx,
+  // where `settings` is guaranteed live.
+  const ownerCtx = options.ownerCtx ?? ctx
+  const offWatch = mountVolatileWatch(ownerCtx, catalog)
+  const offPolicy = mountPagePolicy(ctx, ownerCtx.fiber)
 
   // The engine mounts whenever the context can own effects (a full
   // plugin fiber) or the caller pins the root explicitly (tests). The

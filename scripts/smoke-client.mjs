@@ -175,9 +175,10 @@ assert.equal(mod.sessionIdOf({ session: { id: 's2' } }), 's2')
 assert.equal(mod.sessionIdOf({ session: { sessionId: 's3' } }), 's3')
 assert.equal(mod.sessionIdOf({ sessionId: '  ' }), '', 'blank sessionId is no session')
 
-assert.equal(mod.expertsUrl(''), '/dsh-workbuddy-expert/api/experts')
-assert.equal(mod.expertsUrl('s 1'), '/dsh-workbuddy-expert/api/experts?sessionId=s%201',
+assert.equal(mod.expertsUrl(''), 'dsh-workbuddy-expert/api/experts')
+assert.equal(mod.expertsUrl('s 1'), 'dsh-workbuddy-expert/api/experts?sessionId=s%201',
   'the session id is URL-encoded')
+assert.ok(!mod.expertsUrl('').startsWith('/'), 'URLs stay document-relative (no leading slash)')
 
 // ── 4. the component machine ─────────────────────────────────────────────────
 
@@ -276,11 +277,11 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 // 4a. Live session: current face, broken disabled, pick → switch flow.
 {
   const script = makeFetchScript([
-    { method: 'GET', url: '/dsh-workbuddy-expert/api/experts?sessionId=sess-1',
+    { method: 'GET', url: 'dsh-workbuddy-expert/api/experts?sessionId=sess-1',
       // Post-switch refetches answer with the NEW current expert (what the
       // live host's stateOf would report once the transaction committed).
       body: { ...TABLE, sessionId: 'sess-1', currentExpertId: 'writer' } },
-    { method: 'POST', url: '/dsh-workbuddy-expert/api/switch',
+    { method: 'POST', url: 'dsh-workbuddy-expert/api/switch',
       body: { kind: 'success', text: 'ok' } },
   ])
   sandbox.fetch = script.fetchStub
@@ -338,10 +339,10 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 // fires /api/after-create exactly once and consumes the draft.
 {
   const script = makeFetchScript([
-    { method: 'GET', url: '/dsh-workbuddy-expert/api/experts', body: { ...TABLE } },
-    { method: 'GET', url: '/dsh-workbuddy-expert/api/experts?sessionId=fresh-1',
+    { method: 'GET', url: 'dsh-workbuddy-expert/api/experts', body: { ...TABLE } },
+    { method: 'GET', url: 'dsh-workbuddy-expert/api/experts?sessionId=fresh-1',
       body: { ...TABLE, sessionId: 'fresh-1', currentExpertId: 'editor' } },
-    { method: 'POST', url: '/dsh-workbuddy-expert/api/after-create',
+    { method: 'POST', url: 'dsh-workbuddy-expert/api/after-create',
       body: { kind: 'success', text: 'ok' } },
   ])
   sandbox.fetch = script.fetchStub
@@ -380,9 +381,9 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 // and the face falls back to the bare 专家 label.
 {
   const script = makeFetchScript([
-    { method: 'GET', url: '/dsh-workbuddy-expert/api/experts?sessionId=sess-2',
+    { method: 'GET', url: 'dsh-workbuddy-expert/api/experts?sessionId=sess-2',
       body: { ...TABLE, sessionId: 'sess-2', currentExpertId: null } },
-    { method: 'POST', url: '/dsh-workbuddy-expert/api/clear',
+    { method: 'POST', url: 'dsh-workbuddy-expert/api/clear',
       body: { kind: 'success', text: '已移除专家 editor' } },
   ])
   sandbox.fetch = script.fetchStub
@@ -424,7 +425,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 // 4d. Staged draft: the remove lane CANCELS the draft locally — no request.
 {
   const script = makeFetchScript([
-    { method: 'GET', url: '/dsh-workbuddy-expert/api/experts', body: { ...TABLE } },
+    { method: 'GET', url: 'dsh-workbuddy-expert/api/experts', body: { ...TABLE } },
   ])
   sandbox.fetch = script.fetchStub
   const view = renderComponent(mod.ExpertSelector, { t, initialData: { ...TABLE } })
@@ -550,7 +551,7 @@ const MARKET_STATE = {
     installed: [...MARKET_STATE.installed, { id: 'solo-a', dir: '/x/solo-a', fingerprint: 'f9', importedAt: '2026-02-01T00:00:00Z', updatable: false }],
   }
   const script = makeFetchScript([
-    { method: 'POST', url: '/dsh-workbuddy-expert/api/install', body: { id: 'solo-a', changed: true, state: afterInstall } },
+    { method: 'POST', url: 'dsh-workbuddy-expert/api/install', body: { id: 'solo-a', changed: true, state: afterInstall } },
   ])
   sandbox.fetch = script.fetchStub
   const view = renderComponent(mod.MarketPage, {
@@ -617,7 +618,7 @@ const MARKET_STATE = {
   view.rerender()
   assert.equal(script.calls.length, 1, 'exactly one POST fired (state adopted from the response)')
   assert.deepEqual(script.calls[0], {
-    method: 'POST', url: '/dsh-workbuddy-expert/api/install', body: JSON.stringify({ id: 'solo-a' }),
+    method: 'POST', url: 'dsh-workbuddy-expert/api/install', body: JSON.stringify({ id: 'solo-a' }),
   }, 'the confirm POSTs the expert id to /api/install')
   cards = cardNodes()
   const soloAfter = cards.find((card) => findAll(card, (n) => n.type === 'span' && n.props.className === 'wbx-id')[0].children[0] === 'solo-a')

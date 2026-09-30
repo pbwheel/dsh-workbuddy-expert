@@ -601,7 +601,7 @@ const sameOriginHeaders = { origin: 'http://127.0.0.1:3080', host: '127.0.0.1:30
   for (const field of ['id', 'name', 'zhName', 'description', 'zhDescription', 'skills', 'pluginDir', 'teamSize', 'category']) {
     assert.ok(field in soloOne, `state card carries ${field}`)
   }
-  assert.equal(soloOne.avatarUrl, '/dsh-workbuddy-expert/api/avatar?id=solo-one')
+  assert.equal(soloOne.avatarUrl, 'dsh-workbuddy-expert/api/avatar?id=solo-one')
   assert.equal('avatarPath' in soloOne, false, 'the internal absolute avatarPath never leaks')
   const dup = state.experts.find((expert) => expert.id === 'dup-expert')
   assert.equal('avatarUrl' in dup, false, 'PNG-less experts carry no avatarUrl')

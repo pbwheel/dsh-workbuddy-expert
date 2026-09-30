@@ -165,11 +165,15 @@ export function apply(ctx, config = {}) {
   // live. The export root comes from the SAME resolved dshHome as the
   // discovery roots (安装 = 导出 与扫描一致), and the plugin's config
   // reference rides along for the volatile sourcePath reads.
+  // `ownerCtx` is THIS apply context: the volatile watcher and the page
+  // policy inside mountImporter key on the ENTRY fiber, and the
+  // inject-child context handed to this callback is a DIFFERENT fiber —
+  // passing it left both registrations silently dead (fixed 2026-09-30).
   ctx.inject(['webServer', 'settings'], (importerCtx) => {
     ctx.effect(() => {
       let disposed = false
       let offImporter
-      mountImporter(importerCtx, { config, expertsRoot: join(dshHome, 'experts') })
+      mountImporter(importerCtx, { config, expertsRoot: join(dshHome, 'experts'), ownerCtx: ctx })
         .then((off) => {
           if (disposed) off()
           else offImporter = off

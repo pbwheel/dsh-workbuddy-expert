@@ -61,7 +61,12 @@ window.__ModuleLoader__.load({ id: "dsh-workbuddy-expert", factory: (require) =>
 var module = { exports: {} }; var exports = module.exports;
 
 var NS = 'dsh-workbuddy-expert'
-var API_BASE = '/dsh-workbuddy-expert/api'
+// DOCUMENT-RELATIVE on purpose: the web shell pins <base href="./"> and
+// origin-absolute paths break under prefix-stripping proxy mounts — the
+// built-ins' `PATH.slice(1)` convention. Every fetch/img URL below
+// resolves against the document base, which works at the origin root
+// (http://127.0.0.1:<port>/) and under a mounted deployment alike.
+var API_BASE = 'dsh-workbuddy-expert/api'
 
 // The directory's second voice: ids and counts run in mono.
 var MONO = 'var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)'

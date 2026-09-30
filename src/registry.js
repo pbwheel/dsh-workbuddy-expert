@@ -382,9 +382,13 @@ export async function scanExpertFolder(dir, folderName, rootInfo) {
     roleText,
     // avatar.png: the installer's copied PNG (importer/export.js) — the
     // session selector shows it through the expert-avatar route; a
-    // hand-written folder may drop one in by the same name.
+    // hand-written folder may drop one in by the same name. The URL is
+    // DOCUMENT-RELATIVE (no leading slash): the web shell pins
+    // <base href="./">, so origin-absolute paths break under
+    // prefix-stripping proxy mounts — the browser resolves this against
+    // the document base (the built-ins' `PATH.slice(1)` convention).
     avatarUrl: (await isFile(join(dir, 'avatar.png')))
-      ? `/dsh-workbuddy-expert/api/expert-avatar?id=${id}`
+      ? `dsh-workbuddy-expert/api/expert-avatar?id=${id}`
       : undefined,
     trustScripts: fields.trust_scripts === 'true',
     // Computed (ticket 04): user-rank roots always allow scripts/, project

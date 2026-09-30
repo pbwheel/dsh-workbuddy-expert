@@ -102,10 +102,15 @@ export function namespaceDescriptor(settingsService, ns) {
 /**
  * Watch volatile config commits for sourcePath changes and invalidate
  * the scan cache — the 0.2 replacement of the old scope.watch. The
- * Loader emits `loader/volatile-update` on the owning fiber's context
- * with the changed config paths after committing new values into the
- * running references.
- * @param {object} ctx - the plugin's own context (fiber owner)
+ * Loader emits `loader/volatile-update` on the ENTRY fiber's context with
+ * the changed config paths after committing new values into the running
+ * references, and the dispatch carries an `owner.fiber === entry fiber`
+ * filter — so the listener must sit on the plugin's ROOT apply context.
+ * A listener on an inject-child fiber (`ctx.inject([...], cb)`'s callback
+ * context) NEVER receives the event; that was this plugin's bug until
+ * 2026-09-30 (empirically verified against the vendored cordis/loader:
+ * entry-fiber listener 1 hit, inject-child listener 0).
+ * @param {object} ctx - the plugin's ROOT apply context (fiber owner)
  * @param {{invalidate(): void}} catalog - scan cache invalidated on change
  * @returns {() => void} disposer (no-op when ctx.on is unavailable)
  */
@@ -122,16 +127,22 @@ export function mountVolatileWatch(ctx, catalog) {
  * Page policy hygiene (dsh-settings authoring note): a plugin that
  * ships its own settings page registers `configure({ auto: false })` so
  * schema-driven clients do not ALSO render a generated form for this
- * entry. Registered through the settings-injected context so the policy
- * names this plugin's fiber; every failure is inert.
- * @param {object} ctx - the settings-injected context (carries the fiber)
+ * entry. The settings service keys the policy by the FIBER object it is
+ * handed and describe() looks it up under the ENTRY fiber — so `owner`
+ * must be the plugin's root apply fiber. (Registered with the child
+ * fiber it silently missed: the lookup key never matched — the twin of
+ * the volatile-watch bug, fixed together 2026-09-30.)
+ * @param {object} ctx - the settings-injected context (service lookups
+ *   happen here, where both services are guaranteed live)
+ * @param {object} [owner] - the ENTRY fiber (defaults to ctx.fiber for
+ *   plain test doubles)
  * @returns {() => void} disposer
  */
-export function mountPagePolicy(ctx) {
+export function mountPagePolicy(ctx, owner) {
   const settings = typeof ctx?.get === 'function' ? ctx.get('settings') : undefined
   if (typeof settings?.configure !== 'function') return () => {}
   try {
-    const off = settings.configure({ auto: false }, ctx.fiber)
+    const off = settings.configure({ auto: false }, owner ?? ctx.fiber)
     return typeof off === 'function' ? off : () => {}
   } catch {
     return () => {}

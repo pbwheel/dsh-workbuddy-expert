@@ -279,8 +279,8 @@ assert.deepEqual(scan.experts.map((expert) => expert.id).sort(),
 {
   fixtureWrite(userRoot, 'video-editor/avatar.png', '\x89PNG\r\n\x1a\n')
   const card = (await scanDiscoveryRoots(roots)).experts.find((expert) => expert.id === 'video-editor')
-  assert.equal(card.avatarUrl, '/dsh-workbuddy-expert/api/expert-avatar?id=video-editor',
-    'an avatar.png in the expert folder exposes the expert-avatar URL')
+  assert.equal(card.avatarUrl, 'dsh-workbuddy-expert/api/expert-avatar?id=video-editor',
+    'an avatar.png in the expert folder exposes the (document-relative) expert-avatar URL')
 }
 
 // Broken rows carry reasons.
