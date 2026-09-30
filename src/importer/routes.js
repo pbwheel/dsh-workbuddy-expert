@@ -51,15 +51,20 @@
  *                                       installed/updatable cards,
  *                                       broken exports, orphans.
  *
- * Security baseline (ported from wb-market): mutating routes accept
- * same-origin POSTs only (405/403 otherwise), JSON bodies are capped at
- * 4 KiB, every JSON response carries no-store, and one mutating operation
- * runs at a time — a concurrent second change gets 409. The avatar route
- * is a GET read: no origin check, no lane — its only guard is the
- * id/containment chain above, and it is the ONE response allowed to cache
- * (max-age=60, the sole exception to no-store; a source PNG mtime change
- * moves the fingerprint, the rescan swaps the bytes, and the 60s window
- * absorbs itself).
+ * Security baseline (ported from wb-market, hardened per dshmarket #648/#678):
+ * mutating routes accept same-origin POSTs only (405 otherwise), with an
+ * origin fence that tolerates the Desktop proxy's header stripping — a
+ * PRESENT Host must name loopback (rebinding defence), `sec-fetch-site:
+ * cross-site` is refused, an ABSENT Origin passes (the Desktop build's
+ * proxy strips it; browsers always send it on POSTs), and a present
+ * Origin must equal Host (`Origin: null`/empty refused). JSON bodies are
+ * capped at 4 KiB, every JSON response carries no-store, and one mutating
+ * operation runs at a time — a concurrent second change gets 409. The
+ * avatar route is a GET read: no origin fence, no lane — its only guard
+ * is the id/containment chain above, and it is the ONE response allowed
+ * to cache (max-age=60, the sole exception to no-store; a source PNG
+ * mtime change moves the fingerprint, the rescan swaps the bytes, and
+ * the 60s window absorbs itself).
  */
 
 import { readFile, realpath, stat } from 'node:fs/promises'
@@ -80,11 +85,46 @@ function sendJson(response, status, payload) {
   response.end(JSON.stringify(payload))
 }
 
-/** True when the request's Origin matches its Host — required on POSTs. */
+/**
+ * Whether a `Host` header names a loopback authority. `Origin === Host`
+ * alone does not stop a DNS-rebinding page (evil.com resolving to
+ * 127.0.0.1 sends a matching pair), so Host — the one header the attack
+ * cannot forge — is what must name loopback. `localhost` is included
+ * because browsers and RFC 6761 pin it to loopback; the port is dropped
+ * before comparing and IPv6 literals keep their brackets.
+ */
+function loopbackAuthority(host) {
+  if (host === undefined) return false
+  const lower = host.toLowerCase()
+  const name = lower.startsWith('[') ? lower.slice(0, lower.indexOf(']') + 1) : lower.split(':')[0]
+  return name === '127.0.0.1' || name === 'localhost' || name === '[::1]'
+}
+
+/**
+ * True when the request's origin statement is compatible with this host
+ * (mutating routes only). Contract ported from the dshmarket analysis
+ * (#648/#678), proven on the same runtime:
+ *
+ *   - a PRESENT Host must name a loopback authority (rebinding defence);
+ *     an absent Host is allowed — the Desktop build's proxy strips it;
+ *   - `sec-fetch-site: cross-site` is refused outright — the browser
+ *     itself states the request is cross-site;
+ *   - an ABSENT Origin passes: browsers send Origin on every POST, so its
+ *     absence means the caller is not a page, and the Desktop proxy
+ *     (#648) strips `origin`/`host`/`cookie`/`sec-fetch-site` before the
+ *     in-process host sees the request — refusing absence broke every
+ *     mutating request from the Desktop build with 403;
+ *   - a PRESENT Origin must parse and equal Host: `Origin: null`
+ *     (sandboxed iframe, `data:` document) and an empty Origin are
+ *     present-but-unparseable and refused — only genuine absence is what
+ *     a stripping proxy produces.
+ */
 function sameOrigin(request) {
-  const origin = request.headers.origin
   const host = request.headers.host
-  if (origin === undefined || host === undefined) return false
+  if (host !== undefined && !loopbackAuthority(host)) return false
+  if (request.headers['sec-fetch-site'] === 'cross-site') return false
+  const origin = request.headers.origin
+  if (origin === undefined) return true
   try {
     return new URL(origin).host === host
   } catch {

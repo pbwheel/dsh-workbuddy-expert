@@ -41,10 +41,14 @@
  *                                       agent (the selector's 移除专家
  *                                       action's transport).
  *
- * Security baseline (ported from src/importer/routes.js): mutating routes
- * accept same-origin POSTs only (405/403 otherwise), JSON bodies are capped
- * at 4 KiB, and every JSON response carries no-store. The GET is a plain
- * read: no origin check, no lane.
+ * Security baseline (ported from src/importer/routes.js, hardened per
+ * dshmarket #648/#678): mutating routes accept same-origin POSTs only
+ * (405 otherwise) behind the Desktop-proxy-tolerant origin fence —
+ * present Host must name loopback, `sec-fetch-site: cross-site` refused,
+ * absent Origin allowed (the Desktop proxy strips it), present Origin
+ * must equal Host. JSON bodies are capped at 4 KiB, and every JSON
+ * response carries no-store. The GET is a plain read: no origin fence,
+ * no lane.
  *
  * Agent resolution is an INJECTED seam (`resolveAgent(sessionId)`): the live
  * host's agent-by-sessionId lookup shape is not part of this plugin's
@@ -68,11 +72,33 @@ function sendJson(response, status, payload) {
   response.end(JSON.stringify(payload))
 }
 
-/** True when the request's Origin matches its Host — required on POSTs. */
+/**
+ * Whether a `Host` header names a loopback authority (the DNS-rebinding
+ * defence: a matching Origin/Host pair is forgeable, Host is not).
+ */
+function loopbackAuthority(host) {
+  if (host === undefined) return false
+  const lower = host.toLowerCase()
+  const name = lower.startsWith('[') ? lower.slice(0, lower.indexOf(']') + 1) : lower.split(':')[0]
+  return name === '127.0.0.1' || name === 'localhost' || name === '[::1]'
+}
+
+/**
+ * True when the request's origin statement is compatible with this host
+ * (mutating routes only). Same contract as the importer routes, ported
+ * from the dshmarket analysis (#648/#678): a PRESENT Host must name
+ * loopback; `sec-fetch-site: cross-site` is refused; an ABSENT Origin
+ * passes (the Desktop build's proxy strips origin/host/cookie/
+ * sec-fetch-site before the in-process host sees the request — browsers
+ * always send Origin on POSTs, so absence means "not a page"); a PRESENT
+ * Origin must parse and equal Host (`Origin: null`/empty refused).
+ */
 function sameOrigin(request) {
-  const origin = request.headers.origin
   const host = request.headers.host
-  if (origin === undefined || host === undefined) return false
+  if (host !== undefined && !loopbackAuthority(host)) return false
+  if (request.headers['sec-fetch-site'] === 'cross-site') return false
+  const origin = request.headers.origin
+  if (origin === undefined) return true
   try {
     return new URL(origin).host === host
   } catch {

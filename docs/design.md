@@ -293,3 +293,12 @@ syncedRef 纪律（未分歧跟随宿主值移动、分歧不被打断）。注�
 
 **验证**：smoke-client §5 升级为三座位/三样式标签断言 + 新 §5b 组件机
 （保存/拒绝/重置/收养/防覆写/只读/断线七组用例）；五套脚本全绿。
+
+**追加（同日）**：桌面端实测 `安装失败：same-origin required` —— 0.1 时代的严格同源守卫
+（Origin 缺失即拒）撞上 **Desktop 构建自带的 HTTP 代理会剥离 `origin`/`host`/`cookie`/
+`sec-fetch-site`** 再转发给进程内宿主（dshmarket #648 的结论，本机验证）。守卫按 dshmarket
+的防御等价契约重写（importer 与 selector 两处 POST 路由同步）：在场 Host 必须环回
+（DNS-rebinding 防御，Host 不可伪造）；`sec-fetch-site: cross-site` 直接拒；**缺席 Origin
+放行**（浏览器 POST 必带 Origin，缺席即"非页面"，且桌面代理正产生这种形态）；在场 Origin
+必须可解析且等于 Host（`Origin: null`/空串 = 在场但不可解析 → 拒）。冒烟补齐七种形态
+用例（环回别名、rebinding 对、null/空 Origin、代理形态放行等）。

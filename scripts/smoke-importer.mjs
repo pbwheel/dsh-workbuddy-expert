@@ -632,7 +632,7 @@ const sameOriginHeaders = { origin: 'http://127.0.0.1:3080', host: '127.0.0.1:30
   assert.equal(back.status, 200)
 }
 
-// Method + origin + body-cap rejection on the mutating routes.
+// Method + origin fence + body-cap on the mutating routes.
 {
   let res = makeResponse()
   await refreshRoute.handler(makeRequest({ method: 'GET', url: '/dsh-workbuddy-expert/api/refresh' }), res)
@@ -644,9 +644,54 @@ const sameOriginHeaders = { origin: 'http://127.0.0.1:3080', host: '127.0.0.1:30
     headers: { origin: 'http://evil.example', host: '127.0.0.1:3080' },
   }), res)
   assert.equal(res.status, 403, 'cross-origin POST rejected')
+
+  // The Desktop build's proxy strips origin/host/cookie/sec-fetch-site
+  // before the in-process host sees the request (#648) — absence passes.
   res = makeResponse()
   await refreshRoute.handler(makeRequest({ method: 'POST', url: '/dsh-workbuddy-expert/api/refresh', headers: {} }), res)
-  assert.equal(res.status, 403, 'a POST without an Origin header is rejected too')
+  assert.equal(res.status, 200, 'a POST without Origin/Host (the Desktop proxy shape) is allowed')
+
+  res = makeResponse()
+  await refreshRoute.handler(makeRequest({
+    method: 'POST', url: '/dsh-workbuddy-expert/api/refresh',
+    headers: { origin: 'null', host: '127.0.0.1:3080' },
+  }), res)
+  assert.equal(res.status, 403, 'a present-but-unparseable Origin (null) is refused')
+
+  res = makeResponse()
+  await refreshRoute.handler(makeRequest({
+    method: 'POST', url: '/dsh-workbuddy-expert/api/refresh',
+    headers: { origin: '', host: '127.0.0.1:3080' },
+  }), res)
+  assert.equal(res.status, 403, 'an empty-but-present Origin is refused')
+
+  // DNS-rebinding shape: Origin and Host BOTH name the attacker — the
+  // equality holds, so Host must be the loopback gate (#678).
+  res = makeResponse()
+  await refreshRoute.handler(makeRequest({
+    method: 'POST', url: '/dsh-workbuddy-expert/api/refresh',
+    headers: { origin: 'http://evil.example', host: 'evil.example' },
+  }), res)
+  assert.equal(res.status, 403, 'a matching Origin/Host pair on a non-loopback authority is refused (rebinding)')
+
+  // Loopback aliases with matching Origin all pass (IPv6 bracketed, localhost).
+  for (const host of ['localhost:19387', '[::1]:19387', '127.0.0.1:19387']) {
+    res = makeResponse()
+    await refreshRoute.handler(makeRequest({
+      method: 'POST', url: '/dsh-workbuddy-expert/api/refresh',
+      headers: { origin: `http://${host}`, host },
+    }), res)
+    assert.equal(res.status, 200, `a same-origin loopback POST passes (${host})`)
+  }
+
+  // The browser's own cross-site statement is refused even when Origin
+  // would otherwise match.
+  res = makeResponse()
+  await refreshRoute.handler(makeRequest({
+    method: 'POST', url: '/dsh-workbuddy-expert/api/refresh',
+    headers: { origin: 'http://127.0.0.1:3080', host: '127.0.0.1:3080', 'sec-fetch-site': 'cross-site' },
+  }), res)
+  assert.equal(res.status, 403, 'sec-fetch-site: cross-site is refused outright')
 
   res = makeResponse()
   await configRoute.handler(makeRequest({

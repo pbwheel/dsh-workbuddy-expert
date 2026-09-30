@@ -903,7 +903,7 @@ function makeRequest({ method = 'GET', url = '/', headers = {}, chunks } = {}) {
   return request
 }
 
-const SAME_ORIGIN = { origin: 'http://x.invalid', host: 'x.invalid' }
+const SAME_ORIGIN = { origin: 'http://127.0.0.1:3080', host: '127.0.0.1:3080' }
 
 {
   const experts = [{ id: 'editor', displayName: '剪辑师', order: 10 }, { id: 'bad', broken: 'role.md missing' }]
@@ -975,6 +975,17 @@ const SAME_ORIGIN = { origin: 'http://x.invalid', host: 'x.invalid' }
     await route('/dsh-workbuddy-expert/api/switch')(
       makeRequest({ method: 'POST', headers: { origin: 'http://evil.invalid', host: 'x.invalid' }, chunks: ['{}'] }), res2)
     assert.equal(res2.status, 403, 'cross-origin POST rejected')
+    // The Desktop build's proxy strips origin/host before the in-process
+    // host sees the request (#648) — absence passes the fence.
+    const resProxy = makeResponse()
+    await route('/dsh-workbuddy-expert/api/switch')(
+      makeRequest({ method: 'POST', headers: {}, chunks: [JSON.stringify({ sessionId: 'sess-1', expertId: 'editor' })] }), resProxy)
+    assert.equal(resProxy.status, 200, 'a POST without Origin/Host (the Desktop proxy shape) is allowed')
+    assert.deepEqual(switchCalls.at(-1), ['sess-1', 'editor'], 'the proxy-shaped POST still delegates')
+    const resRebind = makeResponse()
+    await route('/dsh-workbuddy-expert/api/switch')(
+      makeRequest({ method: 'POST', headers: { origin: 'http://evil.invalid', host: 'evil.invalid' }, chunks: ['{}'] }), resRebind)
+    assert.equal(resRebind.status, 403, 'a matching Origin/Host pair on a non-loopback authority is refused (rebinding)')
     const res3 = makeResponse()
     await route('/dsh-workbuddy-expert/api/switch')(
       makeRequest({ method: 'POST', headers: SAME_ORIGIN, chunks: [JSON.stringify({ sessionId: 'sess-1' })] }), res3)
