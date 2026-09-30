@@ -78,6 +78,14 @@ Prerequisites:
 
 ### Install the plugin
 
+One-liner (always the default branch's latest commit, no manual clone):
+
+```sh
+dsh plugin --profile web add github:pbwheel/dsh-workbuddy-expert
+```
+
+Or clone and install from the directory:
+
 ```sh
 git clone https://github.com/pbwheel/dsh-workbuddy-expert.git
 cd dsh-workbuddy-expert
@@ -85,7 +93,7 @@ dsh plugin --profile web add .
 dsh --profile web --dump-config
 ```
 
-`dsh-workbuddy-expert` should appear in the config dump. Then **restart `dsh web`** (the bundle list is read at startup only) and **hard-refresh the browser**. Zero build; the only runtime dependency is the host's own schema factory, @deepseek-ai/schemastery (exact-pinned).
+Both install the latest version on the default branch; `dsh-workbuddy-expert` should appear in the config dump. Then **restart `dsh web`** (the bundle list is read at startup only) and **hard-refresh the browser**. Zero build; the only runtime dependency is the host's own schema factory, @deepseek-ai/schemastery (exact-pinned).
 
 ### Ask an agent to install it
 

@@ -76,21 +76,29 @@
 
 ### 安装插件
 
+一行安装（始终取默认分支最新提交，无需手动 clone）：
+
 ```sh
-git clone --depth 1 --branch v0.2.0 https://github.com/pbwheel/dsh-workbuddy-expert.git
+dsh plugin --profile web add github:pbwheel/dsh-workbuddy-expert
+```
+
+或手动 clone 后从目录安装：
+
+```sh
+git clone --depth 1 https://github.com/pbwheel/dsh-workbuddy-expert.git
 cd dsh-workbuddy-expert
 dsh plugin --profile web add .
 dsh --profile web --dump-config
 ```
 
-配置输出应出现 `dsh-workbuddy-expert`。然后**重启 `dsh web`**（bundles 列表只在启动时读）并**强刷浏览器**。零构建；运行时仅依赖宿主自己的 schema 工厂 @deepseek-ai/schemastery（精确固定）。
+两种方式都装主分支最新版；配置输出应出现 `dsh-workbuddy-expert`。然后**重启 `dsh web`**（bundles 列表只在启动时读）并**强刷浏览器**。零构建；运行时仅依赖宿主自己的 schema 工厂 @deepseek-ai/schemastery（精确固定）。
 
 ### 让 Agent 帮你安装
 
 把下面这段话发给任意能够执行本机终端命令的 Agent：
 
 ```text
-请将 DSH 插件 dsh-workbuddy-expert 从本仓库安装到 web profile：git clone --depth 1 --branch v0.2.0 https://github.com/pbwheel/dsh-workbuddy-expert.git 后执行 dsh plugin --profile web add <目录>。安装后执行 dsh --profile web --dump-config，确认配置包含 dsh-workbuddy-expert，并告诉我如何重启 DSH Web 和开始使用。
+请将 DSH 插件 dsh-workbuddy-expert 从本仓库安装到 web profile：git clone --depth 1 https://github.com/pbwheel/dsh-workbuddy-expert.git 后执行 dsh plugin --profile web add <目录>。安装后执行 dsh --profile web --dump-config，确认配置包含 dsh-workbuddy-expert，并告诉我如何重启 DSH Web 和开始使用。
 ```
 
 ### 三步用上 WorkBuddy 专家
