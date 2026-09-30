@@ -4,10 +4,10 @@
 
 **Bring WorkBuddy experts into DSH: one-click import from the expert market · switch experts anytime via the session selector**
 
-[中文](README.md) · [Features](#features) · [Installation](#installation) · [Design doc](docs/design.md) · [MIT](LICENSE)
+[中文](README.md) · [Features](#features) · [Installation](#install-the-plugin) · [Design doc](docs/design.md) · [MIT](LICENSE)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![DSH Web Plugin](https://img.shields.io/badge/DSH%20Web-Plugin-0f766e.svg)](#installation)
+[![DSH Web Plugin](https://img.shields.io/badge/DSH%20Web-Plugin-0f766e.svg)](#install-the-plugin)
 [![Zero build](https://img.shields.io/badge/Build-zero%20build-0f766e.svg)](#development)
 
 </div>
@@ -32,7 +32,7 @@ The plugin **does not download experts from the network** — the market page re
 <!-- WorkBuddy "Summon" button screenshot (placeholder). Replace docs/images/workbuddy-summon.jpg with a real one, same filename. -->
 ![WorkBuddy Expert Center "Summon" button (placeholder)](docs/images/workbuddy-summon.jpg)
 
-If you have never summoned any expert, that directory is empty and the market page shows an empty list — summon a few in the WorkBuddy Expert Center, and cards appear automatically once the directory is populated.
+If you have never summoned any expert, the market page shows an empty list — summon a few in the Expert Center and cards appear automatically. "Default source directory" below always means this path.
 
 ## Features
 
@@ -40,9 +40,9 @@ If you have never summoned any expert, that directory is empty and the market pa
 
 ![Expert market (placeholder)](docs/images/market.jpg)
 
-- **Read-only scan** of your local WorkBuddy expert directory (default `~/.workbuddy/plugins/marketplaces/experts/plugins`) — never written to, zero data egress;
-- Card browse/search/categories; action buttons live on the card's top-right corner and appear on hover/focus (not installed → Install; installed → Uninstall/Update);
-- **Install = export** into a standard expert folder at `~/.dsh/experts/<id>/` (expert.yml + sanitized role.md + the whole skills tree + `avatar.png` when the source card has a PNG), with the fingerprint manifest in `.expert-source.json`;
+- **Read-only scan** of your local WorkBuddy expert directory (default path see "Expert source") — never written to, zero data egress;
+- Card browse/search/categories; action buttons live on the card's top-right corner (not installed → Install; installed → Uninstall/Update);
+- **Install = export** into a standard expert folder at `~/.dsh/experts/<id>/` (expert.yml, sanitized role.md, the whole skills tree, plus an avatar when the source card has a PNG), with the fingerprint manifest in `.expert-source.json`;
 - **Update**: cards light up updatable when the source changed; update is an in-place re-export. **Uninstall**: deletes the expert folder;
 - **Orphans**: after switching sources, experts installed from another source are listed under "installed but not in the current source" — listed only, never blocking.
 
@@ -50,7 +50,7 @@ If you have never summoned any expert, that directory is empty and the market pa
 
 ![Session selector (placeholder)](docs/images/picker.jpg)
 
-- The expert capsule next to the composer expands into an avatar-carrying expert list; picking one switches the current session's expert;
+- The expert capsule next to the composer expands into an avatar-carrying expert list; pick one to switch;
 - Avatars are exported at install time (`avatar.png`, fetched on demand via `/api/expert-avatar`); no avatar falls back to an emoji;
 - **Switching keeps the full session history**: the role section and skills are swapped as one group, taking effect at the next model-request boundary; an in-flight turn queues the switch until its boundary, never interrupting streaming output;
 - Switch transactions are serialized: one switch per session at a time;
@@ -73,12 +73,20 @@ Once an expert is selected, its capabilities mount onto the current session:
 
 Prerequisites:
 
-- a working DeepSeek Harness Web installation with `dsh` available in your terminal. Examples use the `web` profile; replace it with your target profile;
-- the [WorkBuddy](https://www.workbuddy.cn/) desktop app installed on this machine. The plugin reads a **local** expert directory — an expert is only downloaded to `~/.workbuddy/plugins/marketplaces/experts/plugins` after you click **Summon** on it in the WorkBuddy Expert Center. If you have never summoned any expert, the market page will show an empty list.
+- one of two hosts: the **DeepSeek Harness desktop app** (Electron) or terminal `dsh web`. They run **different profiles** (`desktop` vs `web`) with different install entrances — see below, and don't install into the wrong one;
+- the [WorkBuddy](https://www.workbuddy.cn/) desktop app installed, with at least one expert **summoned** — see ["Expert source"](#expert-source) for the mechanism and default path;
 
 ### Install the plugin
 
-One-liner (always the default branch's latest commit, no manual clone):
+The two hosts run **different profiles** (desktop: `~/.dsh/profiles/desktop`; CLI: `~/.dsh/profiles/web`) that never mix — installing into the wrong one does nothing for your host. The desktop's `desktop` profile is managed exclusively by Electron — `dsh --profile desktop ...` fails with `managed exclusively by the Electron application` — so desktop users should **not** copy the `--profile web` commands below.
+
+**Desktop app (DeepSeek Harness)** — install via the in-app plugin panel:
+
+1. Open the sidebar **Plugins** panel and click **Add plugin**;
+2. Enter the Git address `github:pbwheel/dsh-workbuddy-expert` (an npm package name, a tarball, or the absolute path of a local clone also works);
+3. **Restart the desktop app** after install (the bundle list is read at startup only).
+
+**Terminal (`dsh web`)** — one-liner (always the default branch's latest commit, no manual clone):
 
 ```sh
 dsh plugin --profile web add github:pbwheel/dsh-workbuddy-expert
@@ -97,15 +105,21 @@ Both install the latest version on the default branch; `dsh-workbuddy-expert` sh
 
 ### Ask an agent to install it
 
-Send this prompt to any agent that can run terminal commands on your machine:
+Inside the desktop app, send this to any agent (it installs into the current profile — no terminal needed):
 
 ```text
-Install the DSH plugin dsh-workbuddy-expert from this repository into my web profile: git clone https://github.com/pbwheel/dsh-workbuddy-expert.git, then run dsh plugin --profile web add <directory>. After installation, run dsh --profile web --dump-config, confirm the configuration includes dsh-workbuddy-expert, and explain how to restart DSH Web and start using it.
+Please install the DSH plugin dsh-workbuddy-expert (source: github:pbwheel/dsh-workbuddy-expert) into the current profile, then tell me how to restart and start using it.
+```
+
+Terminal users send this to any agent that can run terminal commands on your machine:
+
+```text
+Install the DSH plugin dsh-workbuddy-expert from this repository into my web profile: git clone https://github.com/pbwheel/dsh-workbuddy-expert.git, then run dsh plugin --profile web add <directory>. After installation, run dsh --profile web --dump-config, confirm the configuration includes dsh-workbuddy-expert, and explain how to restart dsh web and start using it.
 ```
 
 ### Use a WorkBuddy expert in three steps
 
-1. Open **Settings → WorkBuddy Experts** and confirm the source path points to your local WorkBuddy expert directory (default `~/.workbuddy/plugins/marketplaces/experts/plugins`; editable in the topbar). **Empty list?** That means no expert has been summoned in WorkBuddy yet — go to the WorkBuddy Expert Center and click **Summon** on a few; cards appear automatically once the local directory is populated;
+1. Open **Settings → WorkBuddy Experts** (default source path see "Expert source"; editable in the topbar). **Empty list?** No expert summoned yet — see ["Expert source"](#expert-source);
 2. Click **Install** on a card — the expert is exported to `~/.dsh/experts/`;
 3. Back in a conversation, click the expert capsule next to the composer, pick the freshly installed expert, and start chatting.
 
@@ -115,9 +129,11 @@ The command line works too: `/expert` lists all experts, `/expert <name>` switch
 
 | Option | Default | Purpose |
 |---|---|---|
-| `sourcePath` | `~/.workbuddy/plugins/marketplaces/experts/plugins` | WorkBuddy source directory; editable in the market-page topbar or the plugin entry's own settings form (entry id `dsh-workbuddy-expert`). The tilde is stored verbatim and expanded on use; a nonexistent path may be saved (the page shows a notice until it exists) |
+| `sourcePath` | `~/.workbuddy/plugins/marketplaces/experts/plugins` | WorkBuddy source directory; the tilde is stored verbatim and expanded on use; a not-yet-existing path may be saved (the page shows a notice until it exists) |
 | `roots` | — | Optional extra discovery roots; explicit `trust: user` required |
 | `dshHome` | `$DSH_HOME` or `~/.dsh` | Overrides DSH home resolution |
+
+Configuration rides DSH 0.2's **Config form model**: saving `sourcePath` takes effect through the host's volatile chain without remounting the plugin; `roots`/`dshHome` remount per Loader semantics. Form projection and the save chain: see the [design doc](docs/design.md).
 
 Extra-root example:
 
@@ -131,10 +147,10 @@ Extra-root example:
 
 Per-file fingerprints trigger automatic rescans; the Refresh button forces one.
 
-`sourcePath` has two editing entrances over the same data:
+`sourcePath` has two editing entrances over the same data, kept in step through the host's volatile chain:
 
-- **Settings → WorkBuddy Experts** (the market-page topbar, `settings.section` seat);
-- **Plugins → dsh-workbuddy-expert → Configure** (the Plugins page's native row config page, the keyed `plugins.row.config` seat under `dsh-workbuddy-expert#dsh-workbuddy-expert`) — the form rides the page's own configForms binding (revision conflict protection, reset-to-default) with zero network code here; the two views stay in step through the host's volatile chain.
+- **Settings → WorkBuddy Experts** (the market-page topbar);
+- **Plugins → dsh-workbuddy-expert → Configure** (the Plugins page's native row config page, with revision conflict protection and reset-to-default).
 
 ## Development
 
@@ -146,7 +162,7 @@ node scripts/smoke-install.mjs    # install=export pipeline
 node scripts/verify-host-contract.mjs  # Config/volatile chain against real host packages
 ```
 
-Host-side changes (`src/`, `package.json`) need a `dsh web` restart; client-only changes (`client/client.js`) take effect on page refresh.
+Host-side changes (`src/`, `package.json`) need a host restart (restart the desktop app, or `dsh web` on the CLI); client-only changes (`client/client.js`) take effect on page refresh.
 
 | Module | Responsibility |
 |---|---|

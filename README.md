@@ -4,10 +4,10 @@
 
 **把 WorkBuddy 专家装进 DSH：专家市场一键导入 · 会话选择器随时切换**
 
-[English](README.en.md) · [功能](#功能) · [安装](#安装) · [设计文档](docs/design.md) · [MIT](LICENSE)
+[English](README.en.md) · [功能](#功能) · [安装](#安装插件) · [设计文档](docs/design.md) · [MIT](LICENSE)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![DSH Web Plugin](https://img.shields.io/badge/DSH%20Web-Plugin-0f766e.svg)](#安装)
+[![DSH Web Plugin](https://img.shields.io/badge/DSH%20Web-Plugin-0f766e.svg)](#安装插件)
 [![零构建](https://img.shields.io/badge/构建-零构建-0f766e.svg)](#开发)
 
 </div>
@@ -27,12 +27,12 @@
 
 ## 专家来源
 
-插件**不联网下载专家**——市场页读取的是 WorkBuddy 桌面端落盘的**本地**专家目录（默认 `~/.workbuddy/plugins/marketplaces/experts/plugins`）。专家必须先在 WorkBuddy 的**专家中心**点击**召唤**，WorkBuddy 才会把该专家下载落盘到这个目录，之后本插件才能扫描到它：
+插件**不联网下载专家**——市场页读取的是 WorkBuddy 桌面端落盘的**本地**专家目录（默认 `~/.workbuddy/plugins/marketplaces/experts/plugins`）。专家必须先在 WorkBuddy 的**专家中心**点击**召唤**，WorkBuddy 才会把该专家下载落盘，之后本插件才能扫描到它：
 
 <!-- WorkBuddy「召唤」按钮截图（占位）：真图拍摄后同名覆盖 docs/images/workbuddy-summon.jpg -->
 ![WorkBuddy 专家中心「召唤」按钮（占位图）](docs/images/workbuddy-summon.jpg)
 
-一个专家都没召唤过的话，本地目录为空，本插件的市场页相应是空列表——回 WorkBuddy 专家中心召唤几个，目录就位后市场页会自动出现卡片。
+一个都没召唤过，市场页就是空列表——回专家中心召唤几个，卡片会自动出现。下文提到的"默认源目录"均指此路径。
 
 ## 功能
 
@@ -40,16 +40,16 @@
 
 ![专家市场（占位图）](docs/images/market.jpg)
 
-- **只读扫描**本地 WorkBuddy 专家目录（默认 `~/.workbuddy/plugins/marketplaces/experts/plugins`），绝不写它，零数据外发；
-- 卡片浏览/搜索/分类；操作按钮收在卡片右上角，hover/聚焦卡片时浮现（未装 → 安装，已装 → 卸载/更新）；
-- **安装 = 导出**成标准专家文件夹到 `~/.dsh/experts/<id>/`（expert.yml + 清洗后 role.md + skills 整树 + 源卡有 PNG 时 `avatar.png`），指纹清单落 `.expert-source.json`；
+- **只读扫描**本地 WorkBuddy 专家目录（默认路径见「专家来源」），绝不写它，零数据外发；
+- 卡片浏览/搜索/分类；操作按钮收在卡片右上角（未装 → 安装，已装 → 卸载/更新）；
+- **安装 = 导出**成标准专家文件夹到 `~/.dsh/experts/<id>/`（expert.yml、清洗后 role.md、skills 整树，源卡有 PNG 时含头像），指纹清单落 `.expert-source.json`；
 - **更新**：源有变时卡片亮 updatable，更新 = 就地重导；**卸载** = 删整个专家文件夹；
 
 ### 2. 会话选择器
 
 ![会话选择器（占位图）](docs/images/picker.jpg)
 
-- 输入框旁的专家胶囊展开带头像的专家列表，选中即切换当前会话的专家；
+- 输入框旁的专家胶囊展开带头像的专家列表，选中即切换；
 - **切换保留全部会话历史**：角色描述与 skills 整组替换，在下一个模型请求边界生效；轮次进行中则排队到边界后应用，不打断流式输出；
 - 切换事务串行化：同一会话同时只允许一次切换；
 - 一切注册落在 agent scope 层：只影响当前会话，会话结束自动清理；
@@ -71,12 +71,20 @@
 
 前置条件：
 
-- 已可正常运行 DeepSeek Harness Web，且终端可用 `dsh`。示例使用 `web` profile，请替换为实际目标 profile；
-- 本机已安装 [WorkBuddy](https://www.workbuddy.cn/) 桌面端。插件读取的是**本地**专家目录——专家必须先在 WorkBuddy 的专家中心点击**召唤**，才会下载落盘到 `~/.workbuddy/plugins/marketplaces/experts/plugins`。一个都没召唤过的话，市场页会是空列表。
+- 宿主二选一：**DeepSeek Harness 桌面端**（Electron App）或终端 `dsh web`。两者使用**不同的 profile**（桌面端 `desktop`、CLI `web`），安装入口也不同——见下节，别装错边；
+- 本机已安装 [WorkBuddy](https://www.workbuddy.cn/) 桌面端，且至少**召唤**过一个专家——机制与默认路径见[「专家来源」](#专家来源)；
 
 ### 安装插件
 
-一行安装（始终取默认分支最新提交，无需手动 clone）：
+两种宿主用**不同的 profile**（桌面端 `~/.dsh/profiles/desktop`，CLI `~/.dsh/profiles/web`），互不相通，装错宿主读不到。桌面端的 `desktop` profile 由 Electron 独占——终端执行 `dsh --profile desktop ...` 会报 `managed exclusively by the Electron application`——所以桌面端用户**不要**照抄下面的 `--profile web` 命令。
+
+**桌面端（DeepSeek Harness App）**——用应用内插件面板安装：
+
+1. 打开侧栏**插件（Plugins）**面板，点**添加插件（Add plugin）**；
+2. 输入 Git 地址 `github:pbwheel/dsh-workbuddy-expert`（也接受 npm 包名、tarball 或本地 clone 的绝对路径）；
+3. 安装完成后**重启桌面 App**（bundles 列表只在启动时读）。
+
+**终端（`dsh web`）**——一行安装（始终取默认分支最新提交，无需手动 clone）：
 
 ```sh
 dsh plugin --profile web add github:pbwheel/dsh-workbuddy-expert
@@ -95,15 +103,21 @@ dsh --profile web --dump-config
 
 ### 让 Agent 帮你安装
 
-把下面这段话发给任意能够执行本机终端命令的 Agent：
+桌面端里，把这段话发给任意 Agent（它会走当前 profile 的应用内插件管理，无需终端）：
 
 ```text
-请将 DSH 插件 dsh-workbuddy-expert 从本仓库安装到 web profile：git clone --depth 1 https://github.com/pbwheel/dsh-workbuddy-expert.git 后执行 dsh plugin --profile web add <目录>。安装后执行 dsh --profile web --dump-config，确认配置包含 dsh-workbuddy-expert，并告诉我如何重启 DSH Web 和开始使用。
+请把 DSH 插件 dsh-workbuddy-expert（来源 github:pbwheel/dsh-workbuddy-expert）安装到当前 profile，完成后告诉我如何重启生效并开始使用。
+```
+
+终端用户把这段发给能执行本机终端命令的 Agent：
+
+```text
+请将 DSH 插件 dsh-workbuddy-expert 从本仓库安装到 web profile：git clone --depth 1 https://github.com/pbwheel/dsh-workbuddy-expert.git 后执行 dsh plugin --profile web add <目录>。安装后执行 dsh --profile web --dump-config，确认配置包含 dsh-workbuddy-expert，并告诉我如何重启 dsh web 和开始使用。
 ```
 
 ### 三步用上 WorkBuddy 专家
 
-1. 打开**设置 → WorkBuddy 专家**，确认源路径指向本地 WorkBuddy 专家目录（默认 `~/.workbuddy/plugins/marketplaces/experts/plugins`，可在顶栏修改）。**列表为空？** 说明 WorkBuddy 里还没召唤过专家——回 WorkBuddy 专家中心点几个**召唤**，本地目录就位后市场页会自动出现卡片；
+1. 打开**设置 → WorkBuddy 专家**（默认源路径见「专家来源」，可在顶栏修改）。**列表为空？** 说明还没召唤过专家——见[「专家来源」](#专家来源)；
 2. 在卡片上点**安装**——专家即导出到 `~/.dsh/experts/`；
 3. 回到会话，点输入框旁的专家胶囊，选择刚安装的专家，开始对话。
 
@@ -113,16 +127,16 @@ dsh --profile web --dump-config
 
 | 配置项 | 默认值 | 作用 |
 |---|---|---|
-| `sourcePath` | `~/.workbuddy/plugins/marketplaces/experts/plugins` | WorkBuddy 源目录；市场页顶栏或本插件条目的设置表单可改，`~` 原串存储使用时展开；允许保存不存在路径（页面黄条提示，路径就绪自动恢复） |
+| `sourcePath` | `~/.workbuddy/plugins/marketplaces/experts/plugins` | WorkBuddy 源目录；`~` 使用时展开；允许保存暂不存在的路径（页面提示，路径就绪自动恢复） |
 | `roots` | — | 可选追加发现根，必须显式 `trust: user` |
 | `dshHome` | `$DSH_HOME` 或 `~/.dsh` | 覆盖 DSH home 解析 |
 
-配置走 DSH 0.2 的 **Config 表单模型**：插件导出 schemastery `Config`（`sourcePath` 为 `.volatile()`），设置服务在本插件条目（entry id `dsh-workbuddy-expert`）下投影可编辑表单；保存落到 profile 的 cordis patch，改动经 `loader/volatile-update` 热生效（不重挂插件）。`roots`/`dshHome` 是普通字段，修改后按 Loader 语义重挂。市场页的 `/api/config` 保存即走这条链（revision 冲突保护不变）。
+配置走 DSH 0.2 的 **Config 表单模型**：`sourcePath` 保存后经宿主 volatile 链路热生效（不重挂插件）；`roots`/`dshHome` 修改后按 Loader 语义重挂。表单投影与保存链路细节见[设计文档](docs/design.md)。
 
-`sourcePath` 有两个编辑入口，同一份数据：
+`sourcePath` 有两个编辑入口，同一份数据，经宿主 volatile 链路自动同步：
 
-- **设置 → WorkBuddy 专家**（市场页顶栏，`settings.section` 座位）；
-- **插件 → dsh-workbuddy-expert → 配置**（Plugins 页的原生行配置页，`plugins.row.config` keyed 座位，键 `dsh-workbuddy-expert#dsh-workbuddy-expert`）——表单由页面的 configForms 绑定驱动（revision 冲突保护、恢复默认），无自建网络代码，两侧经宿主 volatile 链路自动同步。
+- **设置 → WorkBuddy 专家**（市场页顶栏）；
+- **插件 → dsh-workbuddy-expert → 配置**（Plugins 页的原生行配置页，含 revision 冲突保护与恢复默认）。
 
 追加根示例：
 
@@ -146,13 +160,9 @@ node scripts/smoke-install.mjs         # 安装=导出链路
 node scripts/verify-host-contract.mjs  # 对照真实宿主包验证 Config/volatile 契约
 ```
 
-依赖：仅 `@deepseek-ai/schemastery`（精确固定 `3.18.4`，宿主自己的 schema 工厂），装机由 pnpm 解析。
+依赖仅 `@deepseek-ai/schemastery`（精确固定 `3.18.4`，宿主自己的 schema 工厂）。兼容 DSH `>=0.2.0-rc.2 <0.3.0`（`engines.dsh` 与 `peerDependencies` 同此范围），安装期与启动期均做版本校验；插件清单含本地化文案与图标（`locale/`、`icon.svg`）。
 
-兼容性声明：`engines.dsh` 与 `peerDependencies` 均为 `>=0.2.0-rc.2 <0.3.0` —— 设置模型按 DSH 0.2（entry 表单 + volatile）实现，安装期与启动期都会做版本校验。插件清单含 `dsh.manifestVersion: 1`、`locale/{en,zh}.json` 与 `icon.svg`（插件列表的本地化标题/描述/图标）。
-
-改完 host（`src/`）或 `package.json` 需重启 `dsh web`；只改 `client/client.js` 刷新页面即可。
-
-改完 host（`src/`）或 `package.json` 需重启 `dsh web`；只改 `client/client.js` 刷新页面即可。
+改完 host（`src/`）或 `package.json` 需重启宿主（桌面端重启 App，CLI 重启 `dsh web`）；只改 `client/client.js` 刷新页面即可。
 
 | 模块 | 职责 |
 |---|---|
