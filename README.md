@@ -15,7 +15,7 @@
 > DSH WorkBuddy Expert 是社区维护的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）插件，并非 DeepSeek AI 官方产品。
 
 <!-- 演示动图（占位）：召唤 → 安装 → 选择 → 生效，拍摄后同名覆盖 docs/images/hero-demo.gif -->
-![演示：召唤 → 安装 → 选择 → 生效](docs/images/hero-demo.gif)
+<img src="docs/images/hero-demo.gif" width="70%" alt="演示：召唤 → 安装 → 选择 → 生效" />
 
 ## 它是什么
 
@@ -30,7 +30,7 @@
 插件**不联网下载专家**——市场页读取的是 WorkBuddy 桌面端落盘的**本地**专家目录（默认 `~/.workbuddy/plugins/marketplaces/experts/plugins`）。专家必须先在 WorkBuddy 的**专家中心**点击**召唤**，WorkBuddy 才会把该专家下载落盘，之后本插件才能扫描到它：
 
 <!-- WorkBuddy「召唤」按钮截图（占位）：真图拍摄后同名覆盖 docs/images/workbuddy-summon.jpg -->
-![WorkBuddy 专家中心「召唤」按钮（占位图）](docs/images/workbuddy-summon.jpg)
+<img src="docs/images/workbuddy-summon.jpg" width="40%" alt="WorkBuddy 专家中心「召唤」按钮（占位图）" />
 
 一个都没召唤过，市场页就是空列表——回专家中心召唤几个，卡片会自动出现。下文提到的"默认源目录"均指此路径。
 
@@ -38,7 +38,7 @@
 
 ### 1. WorkBuddy 专家市场（设置 → WorkBuddy 专家）
 
-![专家市场（占位图）](docs/images/market.jpg)
+<img src="docs/images/market.jpg" width="50%" alt="专家市场（占位图）" />
 
 - **只读扫描**本地 WorkBuddy 专家目录（默认路径见「专家来源」），绝不写它，零数据外发；
 - 卡片浏览/搜索/分类；操作按钮收在卡片右上角（未装 → 安装，已装 → 卸载/更新）；
@@ -47,7 +47,7 @@
 
 ### 2. 会话选择器
 
-![会话选择器（占位图）](docs/images/picker.jpg)
+<img src="docs/images/picker.jpg" width="50%" alt="会话选择器（占位图）" />
 
 - 输入框旁的专家胶囊展开带头像的专家列表，选中即切换；
 - **切换保留全部会话历史**：角色描述与 skills 整组替换，在下一个模型请求边界生效；轮次进行中则排队到边界后应用，不打断流式输出；
@@ -58,7 +58,7 @@
 
 ### 3. 专家能力随会话生效
 
-![切换后会话轨迹（占位图）](docs/images/switch-trace.jpg)
+<img src="docs/images/switch-trace.jpg" width="50%" alt="切换后会话轨迹（占位图）" />
 
 选中专家后，其能力即挂载到当前会话：
 
@@ -81,12 +81,14 @@
 **桌面端（DeepSeek Harness App）**——用应用内插件面板安装：
 
 1. 打开侧栏**插件（Plugins）**面板，点**添加插件（Add plugin）**；
-2. 输入 Git 地址 `github:pbwheel/dsh-workbuddy-expert`（也接受 npm 包名、tarball 或本地 clone 的绝对路径）；
+2. 输入插件 npm 包名 `dsh-workbuddy-expert`（即官方插件下载说明中"`dsh plugin add` 之后的部分"；也接受 Git 地址 `github:pbwheel/dsh-workbuddy-expert`、tarball 或本地 clone 的绝对路径）；
 3. 安装完成后**重启桌面 App**（bundles 列表只在启动时读）。
 
-**终端（`dsh web`）**——一行安装（始终取默认分支最新提交，无需手动 clone）：
+**终端（`dsh web`）**——一行安装，npm 包名与 Git 地址均可（始终取最新版，无需手动 clone）：
 
 ```sh
+dsh plugin --profile web add dsh-workbuddy-expert
+# 或从 GitHub 安装：
 dsh plugin --profile web add github:pbwheel/dsh-workbuddy-expert
 ```
 

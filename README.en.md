@@ -15,7 +15,7 @@
 > DSH WorkBuddy Expert is a community-maintained [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH) plugin, not an official DeepSeek AI product.
 
 <!-- Demo gif (placeholder): summon → install → select → effective. Replace docs/images/hero-demo.gif with a real recording, same filename. -->
-![Demo: summon → install → select → effective](docs/images/hero-demo.gif)
+<img src="docs/images/hero-demo.gif" width="70%" alt="Demo: summon → install → select → effective" />
 
 ## What it is
 
@@ -30,7 +30,7 @@ A DSH web plugin that brings the experts from the [WorkBuddy](https://www.workbu
 The plugin **does not download experts from the network** — the market page reads a **local** expert directory that the WorkBuddy desktop app maintains (default `~/.workbuddy/plugins/marketplaces/experts/plugins`). An expert lands there only after you click **Summon** on it in the WorkBuddy **Expert Center**; only then can this plugin scan it:
 
 <!-- WorkBuddy "Summon" button screenshot (placeholder). Replace docs/images/workbuddy-summon.jpg with a real one, same filename. -->
-![WorkBuddy Expert Center "Summon" button (placeholder)](docs/images/workbuddy-summon.jpg)
+<img src="docs/images/workbuddy-summon.jpg" width="40%" alt="WorkBuddy Expert Center &quot;Summon&quot; button (placeholder)" />
 
 If you have never summoned any expert, the market page shows an empty list — summon a few in the Expert Center and cards appear automatically. "Default source directory" below always means this path.
 
@@ -38,7 +38,7 @@ If you have never summoned any expert, the market page shows an empty list — s
 
 ### 1. WorkBuddy expert market (Settings → WorkBuddy Experts)
 
-![Expert market (placeholder)](docs/images/market.jpg)
+<img src="docs/images/market.jpg" width="50%" alt="Expert market (placeholder)" />
 
 - **Read-only scan** of your local WorkBuddy expert directory (default path see "Expert source") — never written to, zero data egress;
 - Card browse/search/categories; action buttons live on the card's top-right corner (not installed → Install; installed → Uninstall/Update);
@@ -48,7 +48,7 @@ If you have never summoned any expert, the market page shows an empty list — s
 
 ### 2. Session selector (with avatars)
 
-![Session selector (placeholder)](docs/images/picker.jpg)
+<img src="docs/images/picker.jpg" width="50%" alt="Session selector (placeholder)" />
 
 - The expert capsule next to the composer expands into an avatar-carrying expert list; pick one to switch;
 - Avatars are exported at install time (`avatar.png`, fetched on demand via `/api/expert-avatar`); no avatar falls back to an emoji;
@@ -60,7 +60,7 @@ If you have never summoned any expert, the market page shows an empty list — s
 
 ### 3. Expert capabilities ride the session
 
-![Session trace after switch (placeholder)](docs/images/switch-trace.jpg)
+<img src="docs/images/switch-trace.jpg" width="50%" alt="Session trace after switch (placeholder)" />
 
 Once an expert is selected, its capabilities mount onto the current session:
 
@@ -83,12 +83,14 @@ The two hosts run **different profiles** (desktop: `~/.dsh/profiles/desktop`; CL
 **Desktop app (DeepSeek Harness)** — install via the in-app plugin panel:
 
 1. Open the sidebar **Plugins** panel and click **Add plugin**;
-2. Enter the Git address `github:pbwheel/dsh-workbuddy-expert` (an npm package name, a tarball, or the absolute path of a local clone also works);
+2. Enter the plugin's **npm package name** `dsh-workbuddy-expert` (i.e. the part after `dsh plugin add` in the official plugin-download instructions; the Git address `github:pbwheel/dsh-workbuddy-expert`, a tarball, or the absolute path of a local clone also works);
 3. **Restart the desktop app** after install (the bundle list is read at startup only).
 
-**Terminal (`dsh web`)** — one-liner (always the default branch's latest commit, no manual clone):
+**Terminal (`dsh web`)** — one-liner, npm package name or Git address both work (always the latest version, no manual clone):
 
 ```sh
+dsh plugin --profile web add dsh-workbuddy-expert
+# or install from GitHub:
 dsh plugin --profile web add github:pbwheel/dsh-workbuddy-expert
 ```
 
