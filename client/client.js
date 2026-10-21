@@ -71,6 +71,16 @@ var API_BASE = 'dsh-workbuddy-expert/api'
 // The directory's second voice: ids and counts run in mono.
 var MONO = 'var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)'
 
+// Elevated popover fill, shared by the selector menu and the market card's
+// action corner. Layer-2 is the opaque raised-surface token the shell itself
+// paints on dialogs and float panels (#fff light / #2c2c2e dark). Never paint
+// --dsw-specific-menu on these seats: that 94%-alpha menu material is
+// specified to pair with backdrop-filter: var(--dsw-menu-backdrop-filter),
+// and painted alone it ghosts the content behind it. The fallback stays in
+// the file's neutral rgba family, at full alpha so the seat is solid even
+// without the token.
+var SOLID_SURFACE = 'var(--dsw-alias-bg-layer-2, rgba(127,127,127,1))'
+
 var CSS = `
 .wbe-wrap { position: relative; }
 .wbe-btn { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border: none;
@@ -94,7 +104,7 @@ var CSS = `
 .wbe-menu { position: absolute; bottom: calc(100% + 4px); left: 0; box-sizing: border-box; padding: 4px;
   display: flex; flex-direction: column; width: 320px; max-width: 360px; max-height: 320px; overflow-y: auto;
   border: 1px solid var(--dsw-alias-border-inverted, rgba(127,127,127,.35)); border-radius: 12px;
-  background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2, inherit));
+  background: ${SOLID_SURFACE};
   box-shadow: var(--dsw-shadow-lv3, 0 8px 24px rgba(0,0,0,.18)); z-index: 10000; }
 .wbe-menu-title { padding: 8px 10px 6px; font-size: 12px; line-height: 16px; color: var(--dsw-alias-label-tertiary, inherit); }
 .wbe-item { display: flex; gap: 8px; align-items: flex-start; width: 100%; padding: 8px 10px;
@@ -308,7 +318,7 @@ var MARKET_CSS = `
    opaque backdrop keeps the row readable over the title/id it overlays. */
 .wbx-corner { position: absolute; top: 8px; right: 8px; z-index: 1; display: flex; flex-wrap: wrap;
   gap: 6px; align-items: center; justify-content: flex-end; padding: 4px; border-radius: 10px;
-  background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2, rgba(30,30,30,.92)));
+  background: ${SOLID_SURFACE};
   border: 1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.28));
   opacity: 0; pointer-events: none; transition: opacity .12s ease; }
 .wbx-card:hover .wbx-corner, .wbx-card:focus-within .wbx-corner { opacity: 1; pointer-events: auto; }
