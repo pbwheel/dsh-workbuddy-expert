@@ -5,6 +5,10 @@
   "type": "module",
   "main": "src/index.js",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pbwheel/dsh-workbuddy-expert.git"
+  },
   "dependencies": {
     "@deepseek-ai/schemastery": "3.18.4"
   },
