@@ -172,7 +172,7 @@ compose(session, expert)：
 
 ## 8. Client
 
-- **P1 切换选择器**（`conversation.input` 区域 + 创建时入口）：专家卡（display_name/description/broken 徽标），选中即触发切换事务；正在切换时禁用并显示目标专家。Slot 契约实施时经 Inspect 查询确认。
+- **P1 切换选择器**（`conversation.input` 区域 + 创建时入口）：专家卡（display_name/description/broken 徽标），列表顶部带**模糊搜索框**（名称 / 描述 / id，多 token AND + 相关度排序，详见 [`docs/expert-picker-search.md`](./expert-picker-search.md)），选中即触发切换事务；正在切换时禁用并显示目标专家。Slot 契约实施时经 Inspect 查询确认。
 - **P2 市场页**（`settings.section`「WorkBuddy 专家」）：wb-market 市场页平移——源路径编辑/黄条/刷新、卡片网格（头像/badge/updatable/broken/orphans）、行内安装/更新/卸载确认、搜索与分类 chip（#23 口径）。交互文案从"安装成 preset"改为"安装专家"。
 - 工程形态照抄 wb-market：手写 `window.__ModuleLoader__.load` bundle、零构建、React.createElement 无 JSX、主题 token、`<style data-plugin>` 随卸载清理、zh/en 字典。
 

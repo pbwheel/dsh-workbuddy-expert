@@ -22,7 +22,7 @@
 A DSH web plugin that brings the experts from the [WorkBuddy](https://www.workbuddy.cn/) Expert Center into your DSH workflow:
 
 - **Expert market** (Settings → WorkBuddy Experts) — a read-only scan of your local WorkBuddy expert directory, with card browse/search/categories and one-click **install / update / uninstall** that exports into standard expert folders;
-- **Session selector** — the expert capsule next to the composer switches the current session's expert anytime: the role section and skills are swapped as one group, **the full session history is kept**, and the change takes effect at the next model-request boundary without interrupting an in-flight turn;
+- **Session selector** — the expert capsule next to the composer switches the current session's expert anytime: the role section and skills are swapped as one group, **the full session history is kept**, and the change takes effect at the next model-request boundary without interrupting an in-flight turn; the list supports fuzzy search by name / description / ID;
 - **A complete expert experience** — installed experts carry their role description, dedicated skills, and avatar; the selector list is ready to use right away.
 
 ## Expert source
@@ -50,7 +50,7 @@ If you have never summoned any expert, the market page shows an empty list — s
 
 <img src="docs/images/picker.jpg" width="50%" alt="Session selector (placeholder)" />
 
-- The expert capsule next to the composer expands into an avatar-carrying expert list; pick one to switch;
+- The expert capsule next to the composer expands into an avatar-carrying expert list with **fuzzy search by name / description / ID**; pick one to switch;
 - Avatars are exported at install time (`avatar.png`, fetched on demand via `/api/expert-avatar`); no avatar falls back to an emoji;
 - **Switching keeps the full session history**: the role section and skills are swapped as one group, taking effect at the next model-request boundary; an in-flight turn queues the switch until its boundary, never interrupting streaming output;
 - Switch transactions are serialized: one switch per session at a time;

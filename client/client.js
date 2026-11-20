@@ -81,6 +81,10 @@ var MONO = 'var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, 
 // without the token.
 var SOLID_SURFACE = 'var(--dsw-alias-bg-layer-2, rgba(127,127,127,1))'
 
+// One listbox id per mounted selector instance (the seat is a singleton
+// today; the counter keeps aria-activedescendant safe if that ever changes).
+var SELECTOR_SEQ = 0
+
 var CSS = `
 .wbe-wrap { position: relative; }
 .wbe-btn { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border: none;
@@ -102,11 +106,30 @@ var CSS = `
   border: 1.5px solid currentColor; border-top-color: transparent; animation: wbe-spin .9s linear infinite; }
 @keyframes wbe-spin { to { transform: rotate(360deg); } }
 .wbe-menu { position: absolute; bottom: calc(100% + 4px); left: 0; box-sizing: border-box; padding: 4px;
-  display: flex; flex-direction: column; width: 320px; max-width: 360px; max-height: 320px; overflow-y: auto;
+  display: flex; flex-direction: column; width: 340px; max-width: 360px; max-height: 420px; max-height: min(420px, 60vh);
+  overflow: hidden;
   border: 1px solid var(--dsw-alias-border-inverted, rgba(127,127,127,.35)); border-radius: 12px;
   background: ${SOLID_SURFACE};
   box-shadow: var(--dsw-shadow-lv3, 0 8px 24px rgba(0,0,0,.18)); z-index: 10000; }
-.wbe-menu-title { padding: 8px 10px 6px; font-size: 12px; line-height: 16px; color: var(--dsw-alias-label-tertiary, inherit); }
+.wbe-menu-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex: none;
+  padding: 6px 8px 4px; font-size: 12px; line-height: 16px; color: var(--dsw-alias-label-tertiary, inherit); }
+.wbe-match-count { flex: none; font-family: ${MONO}; font-size: 11px; line-height: 16px;
+  font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-tertiary, inherit); }
+.wbe-search-row { position: relative; flex: none; padding: 0 4px 6px; }
+.wbe-search { width: 100%; box-sizing: border-box; height: 32px; padding: 0 30px 0 10px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,.35)); border-radius: 8px; outline: none;
+  background: var(--dsw-alias-bg-layer-1, transparent); color: var(--dsw-alias-label-primary, inherit);
+  font-size: 13px; line-height: 20px; }
+.wbe-search:focus { border-color: var(--dsw-alias-brand-primary, currentColor); }
+.wbe-search::placeholder { color: var(--dsw-alias-label-tertiary, inherit); }
+.wbe-search-clear { position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
+  padding: 0; border: 0; border-radius: 50%; background: transparent; cursor: pointer;
+  color: var(--dsw-alias-label-tertiary, inherit); font-size: 12px; line-height: 1; }
+.wbe-search-clear:hover { background: var(--dsw-interactive-bg-hover, rgba(127,127,127,.12));
+  color: var(--dsw-alias-label-primary, inherit); }
+.wbe-search-clear:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, currentColor); outline-offset: 1px; }
+.wbe-list { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .wbe-item { display: flex; gap: 8px; align-items: flex-start; width: 100%; padding: 8px 10px;
   border: none; border-radius: 10px; background: transparent; cursor: pointer; text-align: left;
   color: var(--dsw-alias-label-primary, inherit); box-sizing: border-box; }
@@ -114,8 +137,8 @@ var CSS = `
 .wbe-avatar { width: 28px; height: 28px; flex: none; border-radius: 8px; object-fit: cover;
   display: inline-flex; align-items: center; justify-content: center; font-size: 15px; line-height: 1;
   background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,.18)); }
-.wbe-item:hover:not(:disabled), .wbe-item:focus-visible { background: var(--dsw-interactive-bg-hover, rgba(127,127,127,.12)); }
-.wbe-item:disabled { opacity: .55; cursor: default; }
+.wbe-item:hover:not([aria-disabled="true"]), .wbe-item[data-active="true"]:not([aria-disabled="true"]), .wbe-item:focus-visible { background: var(--dsw-interactive-bg-hover, rgba(127,127,127,.12)); }
+.wbe-item[aria-disabled="true"] { opacity: .55; cursor: default; }
 .wbe-item[data-current="true"] { background: color-mix(in srgb, var(--dsw-alias-brand-primary, #4f6ef7) 8%, transparent); }
 .wbe-item-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .wbe-item-name { font-size: 13px; line-height: 18px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -129,7 +152,14 @@ var CSS = `
   border: 1px solid color-mix(in srgb, var(--dsw-alias-state-warn-primary, #c77700) 45%, transparent); }
 .wbe-item-reason { font-size: 11px; line-height: 16px; color: var(--dsw-alias-state-warn-primary, #c77700); }
 .wbe-current-mark { flex: none; font-size: 11px; color: var(--dsw-alias-state-success-primary, #2e9e5b); }
-.wbe-empty { padding: 8px 10px; font-size: 13px; color: var(--dsw-alias-label-secondary, inherit); }
+.wbe-empty { padding: 12px 10px; font-size: 13px; line-height: 1.5; color: var(--dsw-alias-label-secondary, inherit); text-align: center; }
+.wbe-empty-title { font-size: 13px; color: var(--dsw-alias-label-secondary, inherit); }
+.wbe-empty-hint { margin-top: 2px; font-size: 11px; line-height: 1.5; color: var(--dsw-alias-label-tertiary, inherit); }
+.wbe-empty-clear { margin-top: 8px; padding: 4px 10px; border: 1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.3));
+  border-radius: 999px; background: transparent; cursor: pointer; font-size: 11px; line-height: 1.4;
+  color: var(--dsw-alias-label-secondary, inherit); }
+.wbe-empty-clear:hover { background: var(--dsw-interactive-bg-hover, rgba(127,127,127,.12)); color: var(--dsw-alias-label-primary, inherit); }
+.wbe-empty-clear:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, currentColor); outline-offset: 2px; }
 /* The removal lane — project-wide danger convention (10% red tint on hover). */
 .wbe-remove { display: flex; align-items: center; gap: 6px; width: 100%; padding: 7px 10px; font-size: 12px;
   line-height: 1.4; text-align: left; cursor: pointer; background: none;
@@ -492,6 +522,13 @@ var DICTS = {
     buttonTitle: '切换本会话的专家角色',
     menuTitle: '选择专家',
     menuTitleDraft: '选择专家（创建后生效）',
+    searchPlaceholder: '搜索专家（名称 / 描述 / ID）',
+    searchAria: '搜索专家',
+    searchClear: '清除搜索',
+    searchNoMatch: '没有匹配的专家',
+    searchNoMatchHint: '换个关键词，或清除搜索',
+    searchResults: '匹配 {n} 位专家',
+    matchCount: '{shown} / {total}',
     emptyMenu: '暂无可用专家',
     currentMark: '当前',
     stagedMark: '待创建',
@@ -601,6 +638,13 @@ var DICTS = {
     buttonTitle: 'Switch this session\'s expert role',
     menuTitle: 'Choose an expert',
     menuTitleDraft: 'Choose an expert (applied after creation)',
+    searchPlaceholder: 'Search experts by name, description, or ID',
+    searchAria: 'Search experts',
+    searchClear: 'Clear search',
+    searchNoMatch: 'No matching experts',
+    searchNoMatchHint: 'Try another keyword, or clear the search',
+    searchResults: '{n} experts match',
+    matchCount: '{shown} / {total}',
     emptyMenu: 'No experts available yet',
     currentMark: 'current',
     stagedMark: 'staged',
@@ -788,6 +832,183 @@ function nameOf (expert) {
   return name !== '' ? name : strOf(expert.id)
 }
 
+// ── fuzzy search for the selector (design: docs/expert-picker-search.md) ───
+//
+// All matching is client-side over the table the seat already fetched. The
+// matcher is deliberately dependency-free: normalize → tokenize → score per
+// field → relevance sort with the configured order as the tie-breaker.
+
+/** Cap one search field; long descriptions must not tax every keystroke. */
+var SEARCH_FIELD_MAX = 2048
+
+/** Width/accent/case folding + whitespace collapse for both sides. */
+function normalizeSearchText (value) {
+  var text = typeof value === 'string' ? value : ''
+  if (typeof text.normalize === 'function') {
+    try {
+      text = text.normalize('NFKD')
+    } catch (error) {
+      // Keep the raw text when an engine's normalize() throws; basic
+      // case/whitespace folding below still applies.
+    }
+  }
+  return text
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Query → tokens: whitespace and common CJK/ASCII punctuation separate. */
+function queryTokensOf (query) {
+  var normalized = normalizeSearchText(query)
+  if (normalized === '') return []
+  return normalized
+    .split(/[\s,;:，；：、]+/)
+    .filter(function (token) { return token !== '' })
+    .slice(0, 8)
+}
+
+/** Join the card's skill names into one searchable field. */
+function skillNamesOf (expert) {
+  if (expert === null || typeof expert !== 'object' || !Array.isArray(expert.skills)) return ''
+  var names = []
+  for (var i = 0; i < expert.skills.length; i++) {
+    var skill = expert.skills[i]
+    var name = skill !== null && typeof skill === 'object' ? strOf(skill.name) : strOf(skill)
+    if (name !== '') names.push(name)
+  }
+  return names.join(' ')
+}
+
+/** Cap raw input before normalization so a huge description never taxes a keystroke. */
+function searchTextOf (value) {
+  var text = strOf(value)
+  return text.length > SEARCH_FIELD_MAX ? text.slice(0, SEARCH_FIELD_MAX) : text
+}
+
+/** The weighted haystacks of one card (normalized and capped). */
+function searchFieldsOf (expert) {
+  if (expert === null || typeof expert !== 'object') return []
+  var displayName = nameOf(expert)
+  var zhName = strOf(expert.zhName)
+  if (zhName !== '') displayName += ' ' + zhName
+  var description = strOf(expert.description)
+  var zhDescription = strOf(expert.zhDescription)
+  if (zhDescription !== '') description += ' ' + zhDescription
+  return [
+    { text: normalizeSearchText(searchTextOf(displayName)), weight: 10 },
+    { text: normalizeSearchText(searchTextOf(strOf(expert.id))), weight: 7 },
+    { text: normalizeSearchText(searchTextOf(description)), weight: 3 },
+    { text: normalizeSearchText(searchTextOf(skillNamesOf(expert))), weight: 1 }
+  ]
+}
+
+/**
+ * Ordered-subsequence match (abbreviation / scattered CJK characters).
+ * Only counts when the match is dense enough: span ≤ token length × 3.
+ */
+function subsequenceCoefficientOf (text, token) {
+  if (token.length < 2) return null
+  var tokenIndex = 0
+  var first = -1
+  var last = -1
+  for (var i = 0; i < text.length && tokenIndex < token.length; i++) {
+    if (text.charAt(i) === token.charAt(tokenIndex)) {
+      if (first === -1) first = i
+      last = i
+      tokenIndex++
+    }
+  }
+  if (tokenIndex < token.length) return null
+  var span = last - first + 1
+  if (span > token.length * 3) return null
+  return 0.2 * (token.length / span)
+}
+
+/** Best tier coefficient of one token against one field (subsequence optional). */
+function matchTierOnText (text, token, allowSubsequence) {
+  if (text === '' || token === '') return null
+  if (text === token) return 1
+  if (text.indexOf(token) === 0) return 0.8
+  var words = text.split(/[^a-z0-9\u3400-\u9fff]+/)
+  for (var i = 0; i < words.length; i++) {
+    if (words[i] !== '' && words[i].indexOf(token) === 0) return 0.65
+  }
+  if (text.indexOf(token) !== -1) return 0.5
+  return allowSubsequence === true ? subsequenceCoefficientOf(text, token) : null
+}
+
+/**
+ * Tier with a whitespace-tolerant fallback: "AI视频" also finds
+ * "AI 视频脚本…" through the compact form at a small penalty. Compact
+ * tiers are tried before the weaker subsequence tiers so the fallback is
+ * not shadowed by a scattered-character hit.
+ */
+function matchTierOf (text, token) {
+  if (text === '' || token === '') return null
+  var direct = matchTierOnText(text, token, false)
+  if (direct !== null) return direct
+  var compactText = text.replace(/\s+/g, '')
+  var compactToken = token.replace(/\s+/g, '')
+  var hasCompact = compactText !== text || compactToken !== token
+  if (hasCompact) {
+    var compact = matchTierOnText(compactText, compactToken, false)
+    if (compact !== null) return compact * 0.95
+  }
+  var directSubsequence = subsequenceCoefficientOf(text, token)
+  if (directSubsequence !== null) return directSubsequence
+  if (hasCompact) {
+    var compactSubsequence = subsequenceCoefficientOf(compactText, compactToken)
+    if (compactSubsequence !== null) return compactSubsequence * 0.95
+  }
+  return null
+}
+
+/** Total relevance of one card against every token (null when a token misses). */
+function matchScoreOf (expert, tokens, normalizedQuery) {
+  var fields = searchFieldsOf(expert)
+  if (fields.length === 0) return null
+  var total = 0
+  for (var t = 0; t < tokens.length; t++) {
+    var best = 0
+    for (var f = 0; f < fields.length; f++) {
+      var coefficient = matchTierOf(fields[f].text, tokens[t])
+      if (coefficient !== null) {
+        var value = coefficient * fields[f].weight
+        if (value > best) best = value
+      }
+    }
+    if (best === 0) return null
+    total += best
+  }
+  if (fields[0].text !== '' && fields[0].text.indexOf(normalizedQuery) !== -1) total += 2
+  return total
+}
+
+/**
+ * Filter + rank the selector cards for one query. Empty/blank queries keep
+ * the configured (order, id) order — the same array contents, new array.
+ */
+function searchExpertCards (experts, query) {
+  var list = Array.isArray(experts) ? experts : []
+  var normalized = normalizeSearchText(query)
+  if (normalized === '') return list.slice()
+  var tokens = queryTokensOf(normalized)
+  if (tokens.length === 0) return list.slice()
+  var scored = []
+  for (var i = 0; i < list.length; i++) {
+    var expert = list[i]
+    if (expert === null || typeof expert !== 'object') continue
+    var score = matchScoreOf(expert, tokens, normalized)
+    if (score !== null) scored.push({ expert: expert, score: score, index: i })
+  }
+  scored.sort(function (a, b) {
+    return (b.score - a.score) || (a.index - b.index)
+  })
+  return scored.map(function (entry) { return entry.expert })
+}
+
 /**
  * The session id of one seat render, tolerant to the prop shapes the live
  * composer may hand the slot: props.session?.id, props.sessionId, or
@@ -874,6 +1095,23 @@ function ExpertSelector (props) {
   var setError = errorState[1]
   var error = errorState[0]
 
+  var queryState = React.useState('')
+  var query = queryState[0]
+  var setQuery = queryState[1]
+
+  var activeIdState = React.useState(null)
+  var activeId = activeIdState[0]
+  var setActiveId = activeIdState[1]
+
+  var searchRef = React.useRef(null)
+  var triggerRef = React.useRef(null)
+  var composingRef = React.useRef(false)
+  var listboxIdRef = React.useRef('')
+  if (listboxIdRef.current === '') {
+    listboxIdRef.current = NS + '-expert-listbox-' + String(++SELECTOR_SEQ)
+  }
+  var listboxId = listboxIdRef.current
+
   // The once-guard of the after-create handshake: keyed by the staged
   // expert id, so exactly ONE POST fires per staged draft even if React
   // re-runs the effect (strict mode double-invoke, refetch churn).
@@ -893,9 +1131,65 @@ function ExpertSelector (props) {
     })
   }
 
+  /** Reset the transient search state; called whenever the popover closes. */
+  function resetSearch () {
+    setQuery('')
+    setActiveId(null)
+    composingRef.current = false
+  }
+
+  /** Focus one element ref when it exists and exposes focus(). */
+  function focusElement (ref) {
+    var node = ref.current
+    if (node !== null && node !== undefined && typeof node.focus === 'function') node.focus()
+  }
+
+  /** Return focus to the trigger when it exists and is focusable. */
+  function focusTrigger () { focusElement(triggerRef) }
+
+  /** Return focus to the search field when it exists and is focusable. */
+  function focusSearch () { focusElement(searchRef) }
+
+  /** Close the popover, clear the query, optionally restore trigger focus. */
+  function closeMenu (restoreFocus) {
+    setOpen(false)
+    resetSearch()
+    if (restoreFocus === true) focusTrigger()
+  }
+
+  /** DOM id of the option at one filtered index (index-based: duplicate ids safe). */
+  function optionIdFor (index) {
+    return listboxId + '-opt-' + String(index)
+  }
+
   // (Re)pull when the session identity changes — including the very first
   // mount — so the ✓ marker follows the seat.
   React.useEffect(function () { pull() }, [sessionId])
+
+  // Search focus on open (the input mounts with the popover, so autoFocus
+  // would also do; the effect keeps focus deterministic across re-renders).
+  React.useEffect(function () {
+    if (!open) return undefined
+    focusSearch()
+    return undefined
+  }, [open])
+
+  // Keep the keyboard-highlighted option inside the scroll viewport. DOM
+  // access is guarded so the offline component smoke keeps working.
+  React.useEffect(function () {
+    if (!open || activeId === null) return undefined
+    if (typeof document === 'undefined' || document === null) return undefined
+    var list = document.getElementById(listboxId)
+    if (list === null || list === undefined || typeof list.querySelectorAll !== 'function') return undefined
+    var options = list.querySelectorAll('[role="option"]')
+    for (var n = 0; n < options.length; n++) {
+      if (options[n].getAttribute('data-active') === 'true' && typeof options[n].scrollIntoView === 'function') {
+        options[n].scrollIntoView({ block: 'nearest' })
+        break
+      }
+    }
+    return undefined
+  }, [open, activeId, query])
 
   // The staged-draft handshake (design §3): a draft staged in the
   // no-session state fires /api/after-create EXACTLY ONCE when a session
@@ -925,10 +1219,15 @@ function ExpertSelector (props) {
     if (!open || typeof document === 'undefined' || document === null) return undefined
     var onPointerDown = function (event) {
       if (pointerInsideSelectorUi(event && event.target)) return
-      setOpen(false)
+      closeMenu(false)
     }
     var onKeyDown = function (event) {
-      if (event !== null && event !== undefined && event.key === 'Escape') setOpen(false)
+      if (event !== null && event !== undefined && event.key === 'Escape'
+        && composingRef.current !== true
+        && event.isComposing !== true
+        && event.defaultPrevented !== true) {
+        closeMenu(true)
+      }
     }
     document.addEventListener('pointerdown', onPointerDown)
     document.addEventListener('keydown', onKeyDown)
@@ -942,9 +1241,106 @@ function ExpertSelector (props) {
   var byId = {}
   for (var i = 0; i < cards.length; i++) byId[cards[i].id] = cards[i]
 
+  // Derived search view: empty query → the exact configured order; a query
+  // → relevance order (see searchExpertCards). No memo hook: the table is
+  // small and the host Client only guarantees the basic React hooks.
+  var hasQuery = queryTokensOf(query).length > 0
+  var filtered = searchExpertCards(cards, query)
+  var activeIndex = -1
+  for (var ai = 0; ai < filtered.length; ai++) {
+    if (filtered[ai].id === activeId) { activeIndex = ai; break }
+  }
+  var busy = switching !== null
+
+  /** The ids of the currently selectable (non-broken, non-busy) filtered options. */
+  function selectableIdsOf (list) {
+    var ids = []
+    for (var n = 0; n < list.length; n++) {
+      if (!isBrokenCard(list[n]) && busy !== true) ids.push(list[n].id)
+    }
+    return ids
+  }
+
+  /** Move the active row by one, skipping broken options and wrapping. */
+  function moveActive (step) {
+    var ids = selectableIdsOf(filtered)
+    if (ids.length === 0) { setActiveId(null); return }
+    var at = ids.indexOf(activeId)
+    if (at === -1) {
+      setActiveId(step > 0 ? ids[0] : ids[ids.length - 1])
+      return
+    }
+    setActiveId(ids[(at + step + ids.length) % ids.length])
+  }
+
+  /** Jump to the first/last selectable row (Home/End). */
+  function edgeActive (last) {
+    var ids = selectableIdsOf(filtered)
+    setActiveId(ids.length === 0 ? null : ids[last === true ? ids.length - 1 : 0])
+  }
+
+  /** Input event: filter and highlight the first selectable match. */
+  function onQueryChange (event) {
+    var value = event !== null && event !== undefined && event.target !== undefined
+      && typeof event.target.value === 'string' ? event.target.value : ''
+    setQuery(value)
+    if (queryTokensOf(value).length === 0) {
+      setActiveId(null)
+      return
+    }
+    var ids = selectableIdsOf(searchExpertCards(cards, value))
+    setActiveId(ids.length === 0 ? null : ids[0])
+  }
+
+  /** Clear the query and keep typing focus in the search field. */
+  function clearQuery () {
+    setQuery('')
+    setActiveId(null)
+    focusSearch()
+  }
+
+  /** IME composition guard: Enter during composition must never pick. */
+  function onCompositionStart () { composingRef.current = true }
+  function onCompositionEnd () { composingRef.current = false }
+
+  /** Search-box keyboard navigation (combobox pattern). */
+  function onSearchKeyDown (event) {
+    if (event === null || event === undefined) return
+    var native = event.nativeEvent
+    if (composingRef.current === true || (native !== null && native !== undefined && native.isComposing === true)) return
+    var key = event.key
+    if (key === 'ArrowDown' || key === 'ArrowUp') {
+      event.preventDefault()
+      moveActive(key === 'ArrowDown' ? 1 : -1)
+      return
+    }
+    if (key === 'Home' || key === 'End') {
+      event.preventDefault()
+      edgeActive(key === 'End')
+      return
+    }
+    if (key === 'Tab') {
+      closeMenu(false)
+      return
+    }
+    if (key === 'Enter') {
+      if (activeId === null || busy === true) return
+      var expert = byId[activeId]
+      if (expert === undefined || isBrokenCard(expert)) return
+      event.preventDefault()
+      pick(expert)
+      return
+    }
+    if (key === 'Escape') {
+      event.preventDefault()
+      if (hasQuery) clearQuery()
+      else closeMenu(true)
+    }
+  }
+
   /** Pick: live session → switch transaction; no session → staged draft. */
   var pick = function (expert) {
-    setOpen(false)
+    closeMenu(true)
     if (isBrokenCard(expert)) return
     if (sessionId !== '') {
       setSwitching({ expertId: expert.id })
@@ -967,7 +1363,7 @@ function ExpertSelector (props) {
 
   /** Remove: live session → clear transaction; staged draft → drop it. */
   var removeCurrent = function () {
-    setOpen(false)
+    closeMenu(true)
     if (staged !== null) {
       setStaged(null)
       return
@@ -993,7 +1389,6 @@ function ExpertSelector (props) {
   // expert rides the same resolution so the button shows the avatar
   // beside the name whenever a concrete expert occupies the seat. A clear
   // transaction keeps the CURRENT expert's face with a removing label.
-  var busy = switching !== null
   var clearing = busy && switching.clear === true
   var faceExpert = null
   var faceName = ''
@@ -1014,18 +1409,26 @@ function ExpertSelector (props) {
 
   var menu = null
   if (open) {
-    var items = cards.map(function (expert) {
+    var items = filtered.map(function (expert, index) {
       var broken = isBrokenCard(expert)
       var current = !broken && expert.id === currentExpertId && staged === null
       var isStaged = staged !== null && staged.expertId === expert.id
-      return el('button', {
+      return el('div', {
         key: expert.id,
-        type: 'button',
+        id: optionIdFor(index),
+        role: 'option',
         className: 'wbe-item',
+        'data-option-id': expert.id,
         'data-current': current || isStaged ? 'true' : undefined,
-        disabled: busy || broken,
+        'data-active': expert.id === activeId ? 'true' : undefined,
+        'aria-selected': current || isStaged ? 'true' : undefined,
+        'aria-disabled': busy || broken ? 'true' : undefined,
         title: broken ? strOf(expert.broken) : strOf(expert.description),
-        onClick: function () { pick(expert) }
+        onClick: function () { pick(expert) },
+        onMouseEnter: function () {
+          if (busy === true || broken) return
+          setActiveId(expert.id)
+        }
       },
         el(AvatarFace, { expert: expert, imgClass: 'wbe-avatar', glyphClass: 'wbe-avatar' }),
         el('span', { className: 'wbe-item-main' },
@@ -1040,16 +1443,62 @@ function ExpertSelector (props) {
             : null,
           broken ? el('span', { className: 'wbe-item-reason' }, strOf(expert.broken)) : null))
     })
-    menu = el('div', { className: 'wbe-menu', role: 'listbox', 'aria-label': t('menuTitle') },
-      el('div', { className: 'wbe-menu-title' }, t(sessionId !== '' ? 'menuTitle' : 'menuTitleDraft')),
+    var emptyState = null
+    if (experts !== null && filtered.length === 0) {
+      emptyState = cards.length === 0
+        ? el('div', { className: 'wbe-empty' }, t('emptyMenu'))
+        : el('div', { className: 'wbe-empty' },
+            el('div', { className: 'wbe-empty-title' }, t('searchNoMatch')),
+            el('div', { className: 'wbe-empty-hint' }, t('searchNoMatchHint')),
+            el('button', { type: 'button', className: 'wbe-empty-clear', onClick: clearQuery }, t('searchClear')))
+    }
+    var countText = experts === null
+      ? ''
+      : hasQuery
+        ? t('matchCount', { shown: filtered.length, total: cards.length })
+        : String(cards.length)
+    menu = el('div', { className: 'wbe-menu' },
+      el('div', { className: 'wbe-menu-title' },
+        el('span', null, t(sessionId !== '' ? 'menuTitle' : 'menuTitleDraft')),
+        el('span', {
+          className: 'wbe-match-count', role: 'status', 'aria-live': 'polite',
+          'aria-label': hasQuery ? t('searchResults', { n: filtered.length }) : undefined
+        }, countText)),
+      el('div', { className: 'wbe-search-row' },
+        el('input', {
+          ref: searchRef,
+          className: 'wbe-search',
+          type: 'text',
+          role: 'combobox',
+          'aria-label': t('searchAria'),
+          'aria-autocomplete': 'list',
+          'aria-expanded': 'true',
+          'aria-controls': listboxId,
+          'aria-activedescendant': activeIndex >= 0 ? optionIdFor(activeIndex) : undefined,
+          placeholder: t('searchPlaceholder'),
+          maxLength: 100,
+          autoComplete: 'off',
+          spellCheck: false,
+          autoFocus: true,
+          value: query,
+          onChange: onQueryChange,
+          onKeyDown: onSearchKeyDown,
+          onCompositionStart: onCompositionStart,
+          onCompositionEnd: onCompositionEnd
+        }),
+        query !== '' ? el('button', {
+          type: 'button', className: 'wbe-search-clear',
+          title: t('searchClear'), 'aria-label': t('searchClear'), onClick: clearQuery
+        }, '×') : null),
       error !== '' ? el('div', { className: 'wbe-notice', role: 'alert' }, t('loadFailed') + '：' + error,
         el('button', {
           type: 'button', className: 'wbe-btn', style: { height: 'auto', padding: '2px 6px' },
           onClick: function (event) { event.stopPropagation(); pull() }
         }, t('retry'))) : null,
-      experts !== null && items.length === 0
-        ? el('div', { className: 'wbe-empty' }, t('emptyMenu'))
-        : items,
+      el('div', {
+        className: 'wbe-list', id: listboxId, role: 'listbox',
+        'aria-label': t(sessionId !== '' ? 'menuTitle' : 'menuTitleDraft')
+      }, emptyState !== null ? emptyState : items),
       // The removal lane: a staged draft cancels locally; a live selection
       // POSTs the clear transaction (dispose + default agent). Rendered
       // only when something is actually selected.
@@ -1069,15 +1518,23 @@ function ExpertSelector (props) {
 
   return el('div', { className: 'wbe-wrap' },
     el('button', {
+      ref: triggerRef,
       type: 'button',
       className: 'wbe-btn',
       'data-staged': staged !== null ? 'true' : undefined,
       title: t('buttonTitle'),
       'aria-haspopup': 'listbox',
+      'aria-controls': open ? listboxId : undefined,
       'aria-expanded': open ? 'true' : 'false',
       'aria-busy': busy ? 'true' : undefined,
       disabled: busy,
-      onClick: function () { setOpen(function (prev) { return !prev }) }
+      onClick: function () {
+        if (open) closeMenu(true)
+        else {
+          resetSearch()
+          setOpen(true)
+        }
+      }
     },
       busy ? el('span', { className: 'wbe-spin', 'aria-hidden': 'true' }) : null,
       faceExpert !== null && faceExpert !== undefined
@@ -2581,6 +3038,12 @@ module.exports.removeStyle = removeStyle
 module.exports.sortExpertCards = sortExpertCards
 module.exports.isBrokenCard = isBrokenCard
 module.exports.nameOf = nameOf
+module.exports.normalizeSearchText = normalizeSearchText
+module.exports.queryTokensOf = queryTokensOf
+module.exports.searchFieldsOf = searchFieldsOf
+module.exports.matchTierOf = matchTierOf
+module.exports.matchScoreOf = matchScoreOf
+module.exports.searchExpertCards = searchExpertCards
 module.exports.sessionIdOf = sessionIdOf
 module.exports.expertsUrl = expertsUrl
 module.exports.ExpertSelector = ExpertSelector

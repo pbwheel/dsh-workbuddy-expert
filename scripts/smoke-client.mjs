@@ -9,15 +9,19 @@
  *      plugin metadata (name/inject), zh/en dictionaries key-aligned;
  *   3. pure derivations: selector ordering (order asc, unordered last, id
  *      tiebreak, broken rows INCLUDED), broken detection, name fallback,
- *      tolerant session-id prop shapes, expertsUrl encoding;
+ *      tolerant session-id prop shapes, expertsUrl encoding, and the
+ *      fuzzy-search matcher (normalization, multi-token AND, tiers,
+ *      relevance ordering, empty/no-match behavior);
  *   4. component machine (ExpertSelector over the storing React stub and
  *      a scripted fetch): current-expert face off initialData, broken
  *      cards render disabled with their reason, live-session pick →
  *      POST /api/switch {sessionId, expertId} with the control disabled
  *      showing the TARGET expert until the transaction settles (then the
  *      refetch moves the ✓), no-session pick → STAGED draft (no POST),
- *      and the moment a session id appears the /api/after-create
- *      handshake fires EXACTLY ONCE and consumes the draft;
+ *      the moment a session id appears the /api/after-create handshake
+ *      fires EXACTLY ONCE and consumes the draft, and the selector search
+ *      (autofocus, client-side filtering, counts, empty state, clear,
+ *      Arrow/Enter/Escape, IME guard);
  *   5. apply(): ALL THREE seat registrations (conversation.input.left
  *      selector + settings.section market page, ticket 08, + the keyed
  *      plugins.row.config cell under `<package>#<rowId>`), the three scoped
@@ -88,7 +92,17 @@ function makeReactStub() {
   let current = null
   const React = {
     createElement(type, props, ...children) {
-      return { type, props: props ?? {}, children: children.flat(Infinity) }
+      const node = { type, props: props ?? {}, children: children.flat(Infinity) }
+      // Test-only ref attachment: component assertions can observe the
+      // focus() side effects `closeMenu(true)` / the search autofocus make.
+      const ref = props?.ref
+      if (ref !== null && ref !== undefined && typeof ref === 'object') {
+        if (ref.current === null || ref.current === undefined) {
+          ref.focusCalls = ref.focusCalls ?? 0
+          ref.current = { focus() { ref.focusCalls++ } }
+        }
+      }
+      return node
     },
     useState(initial) {
       const inst = current
@@ -179,6 +193,63 @@ assert.equal(mod.expertsUrl(''), 'dsh-workbuddy-expert/api/experts')
 assert.equal(mod.expertsUrl('s 1'), 'dsh-workbuddy-expert/api/experts?sessionId=s%201',
   'the session id is URL-encoded')
 assert.ok(!mod.expertsUrl('').startsWith('/'), 'URLs stay document-relative (no leading slash)')
+
+// ── 3b. fuzzy search derivations (ExpertSelector search) ────────────────────
+
+const SEARCH_TABLE = [
+  { id: 'ai-humanizer', displayName: 'AI 痕迹消除专家', description: '识别 24 种 AI 写作模式', order: 10,
+    skills: [{ name: 'rewrite' }] },
+  { id: 'ai-video-script', displayName: 'AI 视频脚本创作专家', description: '根据主题生成完整视频脚本', order: 20,
+    skills: [{ name: 'storyboard' }] },
+  { id: 'backend-architect', displayName: '后端架构师', description: '深耕分布式系统和高并发架构', order: 30 },
+  { id: 'writer', displayName: '撰稿人', description: '负责文字', order: 40 },
+]
+const idsOf = (cards) => Array.from(cards, (card) => card.id)
+
+assert.equal(mod.normalizeSearchText('ＡＩ  Video'), 'ai video', 'NFKD width fold + case + space collapse')
+assert.deepEqual([...mod.queryTokensOf(' AI,视频；脚本 ')],
+  ['ai', '视频', '脚本'], 'query tokens split on whitespace/CJK punctuation')
+
+assert.deepEqual(idsOf(mod.searchExpertCards(SEARCH_TABLE, '视频')), ['ai-video-script'],
+  'Chinese substring hits the name')
+assert.deepEqual(idsOf(mod.searchExpertCards(SEARCH_TABLE, 'AI视频')), ['ai-video-script'],
+  'the compact form matches a spaced display name')
+assert.deepEqual(idsOf(mod.searchExpertCards(SEARCH_TABLE, 'writer')), ['writer'],
+  'id search is exact-friendly')
+assert.deepEqual(idsOf(mod.searchExpertCards(SEARCH_TABLE, '负责文字')), ['writer'],
+  'description search works')
+assert.deepEqual(idsOf(mod.searchExpertCards(SEARCH_TABLE, 'ai 视频')), ['ai-video-script'],
+  'multiple tokens are AND across fields')
+assert.deepEqual(idsOf(mod.searchExpertCards(SEARCH_TABLE, '视频专家')), ['ai-video-script'],
+  'dense CJK subsequence bridges the gap between 视频 and 专家')
+assert.deepEqual(idsOf(mod.searchExpertCards(SEARCH_TABLE, 'aivs')), ['ai-video-script'],
+  'dense Latin subsequence supports abbreviations')
+assert.deepEqual(idsOf(mod.searchExpertCards(SEARCH_TABLE, 'ＡＩ')), idsOf(mod.searchExpertCards(SEARCH_TABLE, 'ai')),
+  'full-width and ASCII queries return the same rows')
+
+const RANK_TABLE = [
+  { id: 'desc-only', displayName: '甲', description: '视频剪辑' },
+  { id: 'name-only', displayName: '视频专家', description: '' },
+]
+assert.deepEqual(idsOf(mod.searchExpertCards(RANK_TABLE, '视频')), ['name-only', 'desc-only'],
+  'name hits rank above description-only hits')
+
+const originalOrder = idsOf(SEARCH_TABLE)
+assert.deepEqual(idsOf(mod.searchExpertCards(SEARCH_TABLE, '   ')), originalOrder,
+  'blank query preserves the configured order')
+assert.deepEqual(idsOf(mod.searchExpertCards(SEARCH_TABLE, '不存在')), [],
+  'no match returns an empty list')
+assert.deepEqual(idsOf(mod.searchExpertCards(SEARCH_TABLE, 'ai')), ['ai-humanizer', 'ai-video-script'],
+  'ties keep the configured (order, id) order')
+assert.notEqual(mod.searchExpertCards(SEARCH_TABLE, ''), SEARCH_TABLE,
+  'empty query returns a copy, never the input array')
+assert.equal(mod.matchTierOf('ai-video-script', 'video'), 0.65,
+  'word-prefix tier recognises a mid-id word')
+assert.equal(mod.matchTierOf('ai 视频脚本创作专家', 'ai视频'), 0.76,
+  'the compact prefix tier is preferred over a scattered subsequence hit')
+assert.ok(mod.matchTierOf('ai-video-script', 'aivs') !== null,
+  'subsequence tier is available for abbreviations')
+
 
 // ── 4. the component machine ─────────────────────────────────────────────────
 
@@ -298,14 +369,14 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
   // Open the popover: three cards in selector order, broken first.
   button.props.onClick()
   view.rerender()
-  const items = findAll(view.tree(), (node) => node.type === 'button' && node.props.className === 'wbe-item')
+  const items = findAll(view.tree(), (node) => node.props.role === 'option' && node.props.className === 'wbe-item')
   // Row shape: [AvatarFace, wbe-item-main] — the avatar leads every row,
   // the text column nests one level deeper than it used to.
   const mainOf = (item) => item.children.find((child) => child?.props?.className === 'wbe-item-main')
   assert.ok(items.every((item) => item.children[0]?.type === mod.AvatarFace), 'each row leads with the avatar face')
   assert.deepEqual(items.map((item) => mainOf(item).children[0].children[1].children[0]),
     ['broken-one', 'editor', 'writer'], 'cards render in (order, id) with broken rows listed')
-  assert.equal(items[0].props.disabled, true, 'the broken card is not pickable')
+  assert.equal(items[0].props['aria-disabled'], 'true', 'the broken card is not pickable')
   assert.ok(String(findAll(items[0], (n) => n?.props?.className === 'wbe-item-broken')[0]?.children ?? []).includes('不可用'),
     'the broken badge carries the localized stamp')
   assert.ok(String(findAll(items[0], (n) => n?.props?.className === 'wbe-item-reason')[0]?.children[0] ?? []).includes('expert.yml missing'),
@@ -313,6 +384,14 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
   const editorRow = items[1]
   assert.ok(mainOf(editorRow).children[0].children.some((c) => c?.props?.className === 'wbe-current-mark'),
     'the current expert is marked')
+
+  // Keyboard navigation skips the broken row and lands on the first usable card.
+  const searchInput = findAll(view.tree(), (node) => node?.type === 'input' && node.props.className === 'wbe-search')[0]
+  searchInput.props.onKeyDown({ key: 'ArrowDown', preventDefault() {}, nativeEvent: { isComposing: false } })
+  view.rerender()
+  const activeRow = findAll(view.tree(), (node) => node?.props?.role === 'option' && node.props.className === 'wbe-item')
+    .find((item) => item.props['data-active'] === 'true')
+  assert.equal(activeRow?.props?.['data-option-id'], 'editor', 'ArrowDown skips the broken row')
 
   // Pick the writer: busy state (disabled + target name) until settle.
   const pickWriter = items[2]
@@ -354,7 +433,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
   assert.equal(labelOf(button), '专家', 'no session, no pick → the bare label')
   button.props.onClick()
   view.rerender()
-  const items = findAll(view.tree(), (node) => node.type === 'button' && node.props.className === 'wbe-item')
+  const items = findAll(view.tree(), (node) => node.props.role === 'option' && node.props.className === 'wbe-item')
   items.find((item) => item.children.find((c) => c?.props?.className === 'wbe-item-main')?.children[0].children[1].children[0] === 'writer').props.onClick()
   view.rerender()
   button = buttonOf(view.tree())
@@ -434,7 +513,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
   const labelOf = (button) => button.children.find((child) => child?.props?.className === 'wbe-btn-label').children.join('')
   buttonOf(view.tree()).props.onClick()
   view.rerender()
-  const items = findAll(view.tree(), (node) => node.type === 'button' && node.props.className === 'wbe-item')
+  const items = findAll(view.tree(), (node) => node.props.role === 'option' && node.props.className === 'wbe-item')
   items.find((item) => item.children.find((c) => c?.props?.className === 'wbe-item-main')?.children[0].children[1].children[0] === 'writer').props.onClick()
   view.rerender()
   assert.equal(buttonOf(view.tree()).props['data-staged'], 'true', 'the draft is staged')
@@ -450,6 +529,141 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
   assert.equal(labelOf(button), '专家', 'the face returns to the bare label')
   assert.equal(script.calls.filter((call) => call.method === 'POST').length, 0,
     'cancelling a staged draft fires NO request')
+  delete sandbox.fetch
+}
+
+// 4e. Search UI: the popover gains a focused search field; typing filters
+// client-side (no extra fetch), counts matches, renders the empty state and
+// clears the query from the clear button.
+{
+  const searchTable = { experts: SEARCH_TABLE, sessionId: 'sess-search', currentExpertId: 'writer' }
+  const script = makeFetchScript([
+    { method: 'GET', url: 'dsh-workbuddy-expert/api/experts?sessionId=sess-search', body: searchTable },
+    { method: 'POST', url: 'dsh-workbuddy-expert/api/switch', body: { kind: 'success', text: 'ok' } },
+  ])
+  sandbox.fetch = script.fetchStub
+  const view = renderComponent(mod.ExpertSelector, {
+    t, sessionId: 'sess-search', initialData: searchTable,
+  })
+
+  const buttonOf = (tree) => tree.children.find((child) => child?.type === 'button' && child.props.className === 'wbe-btn')
+  const searchOf = (tree) => findAll(tree, (node) => node?.type === 'input' && node.props.className === 'wbe-search')[0]
+  const optionIds = (tree) => findAll(tree, (node) => node?.props?.role === 'option' && node.props.className === 'wbe-item')
+    .map((item) => item.props['data-option-id'])
+  const key = (input, name, native = {}) => input.props.onKeyDown({ key: name, preventDefault() {}, nativeEvent: native })
+
+  buttonOf(view.tree()).props.onClick()
+  view.rerender()
+  const input = searchOf(view.tree())
+  assert.ok(input, 'the open popover renders a search input')
+  assert.equal(input.props.placeholder, '搜索专家（名称 / 描述 / ID）', 'the search placeholder is localized')
+  assert.equal(input.props.value, '', 'the query starts empty')
+  assert.equal(input.props.autoFocus, true, 'the search input is autofocused')
+  assert.equal(input.props['aria-label'], '搜索专家', 'the combobox has an accessible name')
+
+  await flush()
+  const baselineCalls = script.calls.length
+  input.props.onChange({ target: { value: '视频' } })
+  view.rerender()
+  assert.deepEqual(optionIds(view.tree()), ['ai-video-script'], 'typing filters to the matching expert')
+  assert.equal(findAll(view.tree(), (node) => node?.props?.role === 'option')[0].props['data-active'], 'true',
+    'the first selectable match is active for Enter')
+  assert.ok(String(findAll(view.tree(), (node) => node?.props?.className === 'wbe-match-count')[0]?.children ?? []).includes('1 / 4'),
+    'the title row carries the match / total count')
+
+  searchOf(view.tree()).props.onChange({ target: { value: '不存在' } })
+  view.rerender()
+  assert.equal(optionIds(view.tree()).length, 0, 'no rows survive a missing query')
+  const empty = findAll(view.tree(), (node) => node?.props?.className === 'wbe-empty')[0]
+  assert.ok(empty, 'a no-match state is rendered')
+  assert.ok(textOf(empty).includes('没有匹配的专家'), 'the empty state is localized')
+
+  searchOf(view.tree()).props.onChange({ target: { value: '视频' } })
+  view.rerender()
+  const clearButton = findAll(view.tree(), (node) => node?.type === 'button' && node.props.className === 'wbe-search-clear')[0]
+  assert.ok(clearButton, 'a non-empty query renders the clear button')
+  clearButton.props.onClick()
+  view.rerender()
+  assert.equal(searchOf(view.tree()).props.value, '', 'the clear button empties the query')
+  assert.equal(optionIds(view.tree()).length, SEARCH_TABLE.length, 'clearing restores every expert')
+  assert.equal(script.calls.length, baselineCalls, 'search is purely client-side: no request per keystroke')
+
+  // Keyboard Enter on a live session uses the original switch transaction.
+  searchOf(view.tree()).props.onChange({ target: { value: '视频' } })
+  view.rerender()
+  key(searchOf(view.tree()), 'Enter')
+  await flush()
+  const switchCall = script.calls.find((call) => call.url.endsWith('/api/switch'))
+  assert.equal(switchCall?.method, 'POST', 'live-session Enter reaches POST /api/switch')
+  assert.deepEqual(switchCall?.body, JSON.stringify({ sessionId: 'sess-search', expertId: 'ai-video-script' }),
+    'the keyboard switch POST body is unchanged')
+  delete sandbox.fetch
+}
+
+// 4f. Search keyboard + IME + staged branch: ArrowDown moves the active
+// option, Enter stages it, Escape clears then closes, and composing Enter
+// never picks.
+{
+  const script = makeFetchScript([
+    { method: 'GET', url: 'dsh-workbuddy-expert/api/experts', body: { experts: SEARCH_TABLE } },
+  ])
+  sandbox.fetch = script.fetchStub
+  const view = renderComponent(mod.ExpertSelector, { t, initialData: { experts: SEARCH_TABLE } })
+
+  const buttonOf = (tree) => tree.children.find((child) => child?.type === 'button' && child.props.className === 'wbe-btn')
+  const labelOf = (button) => button.children.find((child) => child?.props?.className === 'wbe-btn-label').children.join('')
+  const searchOf = (tree) => findAll(tree, (node) => node?.type === 'input' && node.props.className === 'wbe-search')[0]
+  const activeOf = (tree) => findAll(tree, (node) => node?.props?.role === 'option' && node.props.className === 'wbe-item')
+    .find((item) => item.props['data-active'] === 'true')
+  const key = (input, name, native = {}) => input.props.onKeyDown({ key: name, preventDefault() {}, nativeEvent: native })
+
+  await flush()
+  const baselineCalls = script.calls.length
+  buttonOf(view.tree()).props.onClick()
+  view.rerender()
+  let input = searchOf(view.tree())
+  input.props.onChange({ target: { value: 'ai' } })
+  view.rerender()
+  assert.equal(activeOf(view.tree()).props['data-option-id'], 'ai-humanizer', 'typing activates the first match')
+  key(searchOf(view.tree()), 'ArrowDown')
+  view.rerender()
+  assert.equal(activeOf(view.tree()).props['data-option-id'], 'ai-video-script', 'ArrowDown moves to the next match')
+  key(searchOf(view.tree()), 'Enter')
+  view.rerender()
+  assert.equal(buttonOf(view.tree()).props['data-staged'], 'true', 'Enter picks the active expert')
+  assert.equal(labelOf(buttonOf(view.tree())), '创建后启用 AI 视频脚本创作专家', 'the staged face names the picked expert')
+  assert.equal(script.calls.filter((call) => call.method === 'POST').length, 0, 'staged picks never POST')
+  const triggerRef = buttonOf(view.tree()).props.ref
+  assert.ok(triggerRef !== null && triggerRef !== undefined, 'the trigger carries a focus ref')
+  const focusBeforeEscape = triggerRef.focusCalls ?? 0
+
+  // Escape first clears the query, second closes the popover.
+  buttonOf(view.tree()).props.onClick()
+  view.rerender()
+  input = searchOf(view.tree())
+  input.props.onChange({ target: { value: '视频' } })
+  view.rerender()
+  key(searchOf(view.tree()), 'Escape')
+  view.rerender()
+  assert.ok(searchOf(view.tree()), 'the first Escape keeps the popover open')
+  assert.equal(searchOf(view.tree()).props.value, '', 'the first Escape clears the query')
+  key(searchOf(view.tree()), 'Escape')
+  view.rerender()
+  assert.equal(searchOf(view.tree()), undefined, 'the second Escape closes the popover')
+  assert.equal((triggerRef.focusCalls ?? 0), focusBeforeEscape + 1, 'closing returns focus to the trigger')
+
+  // IME composition: Enter must not pick while composing.
+  buttonOf(view.tree()).props.onClick()
+  view.rerender()
+  input = searchOf(view.tree())
+  input.props.onCompositionStart()
+  input.props.onChange({ target: { value: 'shipin' } })
+  view.rerender()
+  key(searchOf(view.tree()), 'Enter', { isComposing: true })
+  view.rerender()
+  assert.equal(buttonOf(view.tree()).props['data-staged'], 'true', 'composing Enter leaves the existing draft untouched')
+  searchOf(view.tree()).props.onCompositionEnd()
+  assert.equal(script.calls.length, baselineCalls, 'search navigation never fetches')
   delete sandbox.fetch
 }
 
